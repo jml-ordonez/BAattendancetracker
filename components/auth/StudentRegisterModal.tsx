@@ -7,6 +7,7 @@ import { Modal } from "@/components/ui/Modal";
 import { Field, SelectField } from "@/components/ui/Field";
 import { btn } from "@/components/ui/styles";
 import { getRegisteredStudent, registerStudent } from "@/lib/auth/session";
+import { api, ApiError } from "@/lib/client/api";
 import { registrableEvents } from "@/lib/attendance/schedule";
 import { useEvents } from "@/lib/client/events";
 import { formatDay } from "@/lib/format";
@@ -133,7 +134,7 @@ export function StudentRegisterModal({ isOpen, onClose, onSuccess, goToPass = tr
     setErrors((prev) => ({ ...prev, [field]: errs[field] }));
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (isSubmitting) return;
 
@@ -152,18 +153,33 @@ export function StudentRegisterModal({ isOpen, onClose, onSuccess, goToPass = tr
     }
 
     setIsSubmitting(true);
+    const profile = {
+      firstName: firstName.trim().replace(/\s+/g, " "),
+      lastName: lastName.trim().replace(/\s+/g, " "),
+      studentIdNumber: sid,
+      email: mail,
+      // Every section names its program (MM-1A → BSBA-MM).
+      majorCode: deriveMajorFromSection(sec),
+      yearLevel: yearLevelForSection(sec)!,
+      section: sec,
+      eventId: chosenEvent,
+    };
+
+    // The database is the record of registration; the device only keeps a copy for the pass.
     try {
-      registerStudent({
-        firstName: firstName.trim().replace(/\s+/g, " "),
-        lastName: lastName.trim().replace(/\s+/g, " "),
-        studentIdNumber: sid,
-        email: mail,
-        // Every section names its program (MM-1A → BSBA-MM).
-        majorCode: deriveMajorFromSection(sec),
-        yearLevel: yearLevelForSection(sec)!,
-        section: sec,
-        eventId: chosenEvent,
-      });
+      await api("/api/students/register", { method: "POST", json: profile });
+    } catch (err) {
+      if (err instanceof ApiError) {
+        setErrors(Object.keys(err.fieldErrors).length ? err.fieldErrors : { form: err.message });
+      } else {
+        setErrors({ form: "We couldn't reach the server to save your registration. Check your connection, then try again." });
+      }
+      setIsSubmitting(false);
+      return;
+    }
+
+    try {
+      registerStudent(profile);
       onSuccess?.();
       if (goToPass) {
         router.push("/student/qr");
@@ -173,7 +189,7 @@ export function StudentRegisterModal({ isOpen, onClose, onSuccess, goToPass = tr
       }
     } catch {
       setErrors({
-        form: "We couldn't save your details on this device. Check that private browsing is off, then try again.",
+        form: "Your registration was saved, but we couldn't keep your pass on this device. Check that private browsing is off, then try again.",
       });
       setIsSubmitting(false);
     }
@@ -190,7 +206,7 @@ export function StudentRegisterModal({ isOpen, onClose, onSuccess, goToPass = tr
       }}
       size="lg"
       title={isEdit ? "Update your details" : "Register for your attendance pass"}
-      description="Enter your details once as they appear on your university ID. Your pass stays saved on this device."
+      description="Enter your details once as they appear on your university ID. Your registration is saved and your pass stays on this device."
     >
       <form onSubmit={handleSubmit} noValidate className="space-y-5">
         {errors.form && (
