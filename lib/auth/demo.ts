@@ -1,0 +1,41 @@
+/**
+ * Staff and admin accounts. Shared by the server (credential check) and the
+ * sign-in dialog (credentials hint).
+ */
+export interface StaffAccount {
+  username: string;
+  email: string;
+  password: string;
+  name: string;
+  title: string;
+  role: "administrator" | "coordinator";
+}
+
+export const ADMIN_USERS: StaffAccount[] = [
+  {
+    username: process.env.ADMIN_USERNAME || "admin",
+    password: process.env.ADMIN_PASSWORD || "masteradmin2526",
+    email: process.env.ADMIN_EMAIL || "admin@ua.edu.ph",
+    name: "System Administrator",
+    title: "Administrator",
+    role: "administrator",
+  },
+  {
+    username: "admin@ua.edu.ph",
+    password: process.env.ADMIN_PASSWORD || "masteradmin2526",
+    email: "admin@ua.edu.ph",
+    name: "System Administrator",
+    title: "Administrator",
+    role: "administrator",
+  },
+  {
+    username: "eleanor",
+    password: "admin123",
+    email: "admin@university.edu",
+    name: "Dr. Eleanor Vance",
+    title: "Department Chair",
+    role: "administrator",
+  },
+];
+
+export const DEMO_ADMIN = ADMIN_USERS[0];

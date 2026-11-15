@@ -1,0 +1,23 @@
+{
+  "name": "BA Attendance · College of Business Administration",
+  "short_name": "BA Attendance",
+  "description": "Dynamic QR attendance for Business Administration events, seminars and assemblies.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#facc15",
+  "icons": [
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}
