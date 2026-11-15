@@ -1,4 +1,5 @@
 import crypto from "crypto";
+import { ConfigError, serverSecret } from "@/lib/config/secrets";
 
 /**
  * Signed, httpOnly staff session cookie.
@@ -25,8 +26,9 @@ interface SessionPayload extends AdminIdentity {
   exp: number;
 }
 
+/** Throws ConfigError in production when no private signing key is set (a known key would let anyone forge a session). */
 function secret(): string {
-  return process.env.ADMIN_SESSION_SECRET || process.env.QR_HMAC_SECRET_KEY || "ba-attendance-dev-session-secret";
+  return serverSecret(["ADMIN_SESSION_SECRET", "QR_HMAC_SECRET_KEY"], "ba-attendance-dev-session-secret", "Staff sign-in");
 }
 
 function sign(body: string): string {
@@ -44,7 +46,14 @@ export function verifySessionToken(token: string | null | undefined, now = Date.
   const [body, signature] = token.split(".");
   if (!body || !signature) return null;
 
-  const expected = Buffer.from(sign(body));
+  let expected: Buffer;
+  try {
+    expected = Buffer.from(sign(body));
+  } catch (error) {
+    // No signing key: nobody is signed in. Sign-in itself reports the missing setting.
+    if (error instanceof ConfigError) return null;
+    throw error;
+  }
   const actual = Buffer.from(signature);
   if (expected.length !== actual.length || !crypto.timingSafeEqual(expected, actual)) return null;
 

@@ -1,4 +1,5 @@
 import crypto from "crypto";
+import { ConfigError, serverSecret } from "@/lib/config/secrets";
 import { QREnvelope, DecryptedQRPayload } from "@/types/qr";
 
 /**
@@ -48,8 +49,9 @@ function parseHexOrBuffer(value: string | undefined, expectedBytes: number, name
 }
 
 export function getCryptoKeys(): KeyConfig {
-  const rawDes = process.env.QR_3DES_SECRET_KEY || "0123456789abcdef0123456789abcdef0123456789abcdef";
-  const rawHmac = process.env.QR_HMAC_SECRET_KEY || "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+  // Development-only fallbacks; production refuses to run on them (see lib/config/secrets.ts).
+  const rawDes = serverSecret(["QR_3DES_SECRET_KEY"], "0123456789abcdef0123456789abcdef0123456789abcdef", "Attendance passes");
+  const rawHmac = serverSecret(["QR_HMAC_SECRET_KEY"], "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", "Attendance passes");
   const keyId = process.env.QR_KEY_VERSION || "k1";
 
   const desKey = parseHexOrBuffer(rawDes, DES_KEY_BYTES, "QR_3DES_SECRET_KEY");
@@ -233,7 +235,9 @@ export function decryptPayload(tokenString: string, keys?: KeyConfig): DecryptRe
     }
 
     return { success: true, payload };
-  } catch {
+  } catch (error) {
+    // A server that isn't set up is not a bad pass: let the caller say so.
+    if (error instanceof ConfigError) throw error;
     return { success: false, error: "DECRYPTION_FAILED" };
   }
 }

@@ -3,7 +3,6 @@ import { recordAttendance } from "../lib/attendance/record";
 import { clearScans, listScans } from "../lib/attendance/store";
 import { buildRoll } from "../lib/attendance/roll";
 import { createSessionToken, verifySessionToken } from "../lib/auth/admin-session";
-import { ADMIN_USERS, DEMO_ADMIN } from "../lib/auth/demo";
 import {
   SECTION_PATTERN,
   STUDENT_ID_PATTERN,
@@ -147,22 +146,9 @@ describe("Staff session cookie", () => {
     const [body, sig] = token.split(".");
     const forged = Buffer.from(JSON.stringify({ ...admin, role: "administrator", name: "Mallory", exp: 9999999999 })).toString("base64url");
     expect(verifySessionToken(`${forged}.${sig}`)).toBeNull();
-    expect(verifySessionToken(`${body}.x${sig.slice(1)}`)).toBeNull();
+    // Change the first character to one it certainly isn't (replacing it with a fixed letter is a no-op 1 time in 64).
+    expect(verifySessionToken(`${body}.${sig[0] === "x" ? "y" : "x"}${sig.slice(1)}`)).toBeNull();
     expect(verifySessionToken(createSessionToken(admin, Date.now() - 9 * 3600 * 1000))).toBeNull();
-  });
-});
-
-describe("Admin credentials", () => {
-  it("includes admin user with masteradmin2526 password", () => {
-    const adminUser = ADMIN_USERS.find((u) => u.username === "admin");
-    expect(adminUser).toBeDefined();
-    expect(adminUser?.password).toBe("masteradmin2526");
-    expect(adminUser?.role).toBe("administrator");
-  });
-
-  it("sets DEMO_ADMIN default to the admin account", () => {
-    expect(DEMO_ADMIN.username).toBe("admin");
-    expect(DEMO_ADMIN.password).toBe("masteradmin2526");
   });
 });
 

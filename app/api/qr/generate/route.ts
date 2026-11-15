@@ -4,6 +4,7 @@ import { generateStudentQRToken } from "@/lib/tokens/qr-token";
 import { findSession } from "@/lib/events/store";
 import { formatLocalDateTime } from "@/lib/events/windows";
 import { registrationIsOpen, registrationOpensAt } from "@/lib/attendance/schedule";
+import { ConfigError } from "@/lib/config/secrets";
 import { jsonError, parseBody } from "@/lib/http";
 import { majorCodeSchema, personNameSchema, sectionSchema, studentIdSchema } from "@/lib/validation";
 
@@ -49,17 +50,23 @@ export async function POST(request: NextRequest) {
   }
   const expirySeconds = Math.max(sessionEndSec - nowSec, 0) + VALID_AFTER_SESSION_SECONDS;
 
-  const token = generateStudentQRToken({
-    studentId: student.idNumber,
-    studentName: student.name,
-    studentIdNumber: student.idNumber,
-    majorCode: student.majorCode,
-    section: student.section,
-    eventId,
-    sessionId,
-    purpose: "attendance",
-    expirySeconds,
-  });
+  let token;
+  try {
+    token = generateStudentQRToken({
+      studentId: student.idNumber,
+      studentName: student.name,
+      studentIdNumber: student.idNumber,
+      majorCode: student.majorCode,
+      section: student.section,
+      eventId,
+      sessionId,
+      purpose: "attendance",
+      expirySeconds,
+    });
+  } catch (error) {
+    if (error instanceof ConfigError) return jsonError(error.message, 503);
+    throw error;
+  }
 
   return NextResponse.json({
     token: token.token,

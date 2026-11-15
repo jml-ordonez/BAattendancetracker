@@ -27,8 +27,15 @@ if (!supabaseUrl || !serviceKey) {
   process.exit(1);
 }
 
-const email = process.argv[2] || "admin@ua.edu.ph";
-const password = process.argv[3] || "masteradmin2526";
+const email = process.argv[2] || process.env.ADMIN_EMAIL || "admin@ua.edu.ph";
+// No default password: one written in this file would be public to anyone who can read the repository.
+const password = process.argv[3] || process.env.ADMIN_PASSWORD;
+if (!password || password.length < 12) {
+  console.error("Error: give a password of at least 12 characters.");
+  console.error("Usage: npm run add-admin -- <email> <password> [firstName] [lastName] [role]");
+  console.error("   or: set ADMIN_PASSWORD in .env.local and run npm run add-admin");
+  process.exit(1);
+}
 const firstName = process.argv[4] || "System";
 const lastName = process.argv[5] || "Admin";
 const role = process.argv[6] || "administrator";
@@ -84,8 +91,8 @@ async function main() {
   if (profErr) throw profErr;
   console.log("Configured admin profile in public.profiles:", profile?.[0]);
   console.log("\nSuccess! You can sign in via the admin modal with:");
-  console.log(`  Username: ${email.startsWith("admin") ? "admin or " + email : email}`);
-  console.log(`  Password: ${password}\n`);
+  console.log(`  Username: ${email.split("@")[0]}`);
+  console.log("  Password: the one you just set (not printed).\n");
 }
 
 main().catch((err) => {

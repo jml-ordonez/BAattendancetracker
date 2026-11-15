@@ -4,6 +4,7 @@ import { buildRoll } from "@/lib/attendance/roll";
 import { generateAttendanceCSV, type CSVAttendanceRow } from "@/lib/export/csv-generator";
 import { encryptCSV } from "@/lib/export/csv-crypto";
 import { logAudit } from "@/lib/audit/store";
+import { ConfigError } from "@/lib/config/secrets";
 import { clientIp, jsonError, requireAdmin } from "@/lib/http";
 
 const TIME_ZONE = process.env.APP_TIMEZONE || "Asia/Manila";
@@ -71,7 +72,13 @@ export async function GET(request: NextRequest) {
   const plainBody = "﻿" + generateAttendanceCSV(rows);
 
   if (encrypted) {
-    const encryptedBody = encryptCSV(plainBody, passphrase);
+    let encryptedBody;
+    try {
+      encryptedBody = encryptCSV(plainBody, passphrase);
+    } catch (error) {
+      if (error instanceof ConfigError) return jsonError(error.message, 503);
+      throw error;
+    }
     const filename = `BA_Attendance_Encrypted_${dateStr}.enc.csv`;
     return new NextResponse(encryptedBody, {
       headers: {

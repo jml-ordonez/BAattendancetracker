@@ -1,7 +1,8 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
-import { ADMIN_USERS } from "@/lib/auth/demo";
+import { builtInAdminConfigured, checkBuiltInAdmin } from "@/lib/auth/staff-accounts";
+import { ConfigError } from "@/lib/config/secrets";
 import { ADMIN_COOKIE, createSessionToken, sessionCookieOptions, type AdminIdentity, type StaffRole } from "@/lib/auth/admin-session";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { logAudit } from "@/lib/audit/store";
@@ -126,21 +127,14 @@ export async function POST(request: NextRequest) {
     return jsonError(`Too many failed attempts. Try again in ${minutes} minute${minutes === 1 ? "" : "s"}.`, 429);
   }
 
-  // Configured admin accounts first (no network round trip)
-  const matchedUser = ADMIN_USERS.find(
-    (u) =>
-      (u.username.toLowerCase() === normalizedId || u.email.toLowerCase() === normalizedId) &&
-      u.password === password
-  );
+  // No way to sign in at all: say so instead of "wrong password", which would send staff in circles.
+  if (!builtInAdminConfigured() && !supabaseConfigured()) {
+    console.error("[auth] No staff accounts are configured: set ADMIN_PASSWORD, or the Supabase variables, in the environment.");
+    return jsonError("Staff sign-in isn't set up on this server yet. Tell the department.", 503);
+  }
 
-  let identity: AdminIdentity | null = matchedUser
-    ? {
-        email: matchedUser.email,
-        name: matchedUser.name,
-        title: matchedUser.title,
-        role: matchedUser.role,
-      }
-    : null;
+  // The built-in administrator first (no network round trip)
+  let identity: AdminIdentity | null = checkBuiltInAdmin(normalizedId, password);
 
   if (!identity) {
     identity = await supabaseStaff(normalizedId, password);
@@ -162,6 +156,15 @@ export async function POST(request: NextRequest) {
     return jsonError("Username or password is incorrect.", 401);
   }
 
+  let sessionToken: string;
+  try {
+    sessionToken = createSessionToken(identity);
+  } catch (error) {
+    // The password was right, but the server has no private key to sign the session with.
+    if (error instanceof ConfigError) return jsonError(error.message, 503);
+    throw error;
+  }
+
   failures.delete(failureKey);
   logAudit({
     actor: identity.name,
@@ -181,6 +184,6 @@ export async function POST(request: NextRequest) {
       },
     }
   );
-  response.cookies.set(ADMIN_COOKIE, createSessionToken(identity), sessionCookieOptions);
+  response.cookies.set(ADMIN_COOKIE, sessionToken, sessionCookieOptions);
   return response;
 }

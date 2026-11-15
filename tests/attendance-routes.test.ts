@@ -162,15 +162,53 @@ describe("Scanning and the records list", () => {
   });
 
   it("answers with a readable error, not a crash, when the database isn't connected in production", async () => {
+    // A production server with its private keys set, but no database.
     vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("QR_3DES_SECRET_KEY", "a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718");
+    vi.stubEnv("QR_HMAC_SECRET_KEY", "9f8e7d6c5b4a39281706f5e4d3c2b1a09f8e7d6c5b4a39281706f5e4d3c2b1a0");
     try {
-      const res = await scan(pass(EVENT_A, SESSION_A));
+      const res = await verifyScan(
+        new NextRequest("http://localhost/api/qr/verify", {
+          method: "POST",
+          headers: { "content-type": "application/json", cookie: `${ADMIN_COOKIE}=${createSessionToken(admin)}` },
+          body: JSON.stringify({ token: pass(EVENT_A, SESSION_A), eventId: EVENT_A, sessionId: SESSION_A, expectedPurpose: "time_in" }),
+        })
+      );
       const body = await res.json();
       expect(res.status).toBe(503);
       expect(body.status).toBe("SERVER_ERROR");
       expect(body.message).toMatch(/database isn't connected/i);
     } finally {
-      vi.stubEnv("NODE_ENV", "test");
+      vi.unstubAllEnvs();
+      vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", "");
+      vi.stubEnv("SUPABASE_URL", "");
+      vi.stubEnv("SUPABASE_SERVICE_ROLE_KEY", "");
+      vi.stubEnv("SUPABASE_SECRET_KEY", "");
+    }
+  });
+
+  it("says the server isn't set up, not 'invalid pass', when the pass keys are missing in production", async () => {
+    const token = pass(EVENT_A, SESSION_A);
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("ADMIN_SESSION_SECRET", "a-private-session-signing-secret-for-tests");
+    try {
+      const res = await verifyScan(
+        new NextRequest("http://localhost/api/qr/verify", {
+          method: "POST",
+          headers: { "content-type": "application/json", cookie: `${ADMIN_COOKIE}=${createSessionToken(admin)}` },
+          body: JSON.stringify({ token, eventId: EVENT_A, sessionId: SESSION_A, expectedPurpose: "time_in" }),
+        })
+      );
+      const body = await res.json();
+      expect(res.status).toBe(503);
+      expect(body.status).toBe("SERVER_ERROR");
+      expect(body.message).toMatch(/isn't fully set up/);
+    } finally {
+      vi.unstubAllEnvs();
+      vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", "");
+      vi.stubEnv("SUPABASE_URL", "");
+      vi.stubEnv("SUPABASE_SERVICE_ROLE_KEY", "");
+      vi.stubEnv("SUPABASE_SECRET_KEY", "");
     }
   });
 });

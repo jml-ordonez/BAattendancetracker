@@ -3,6 +3,7 @@ import { z } from "zod";
 import { validateTokenIntegrity } from "@/lib/tokens/qr-token";
 import { recordAttendance } from "@/lib/attendance/record";
 import { ScanStoreError } from "@/lib/attendance/store";
+import { ConfigError } from "@/lib/config/secrets";
 import { EventStoreError, findSession } from "@/lib/events/store";
 import { logAudit } from "@/lib/audit/store";
 import { clientIp, jsonError, parseBody, requireAdmin } from "@/lib/http";
@@ -50,12 +51,12 @@ export async function POST(request: NextRequest) {
   const { token, eventId, sessionId, expectedPurpose } = parsed.data;
   const ip = clientIp(request);
 
-  // Decrypt, check the HMAC, expiry, event and session in one place.
-  const check = validateTokenIntegrity(token, undefined, eventId, sessionId);
-  const p = check.payload;
-
   let result: ScanVerificationResult;
   try {
+    // Decrypt, check the HMAC, expiry, event and session in one place.
+    const check = validateTokenIntegrity(token, undefined, eventId, sessionId);
+    const p = check.payload;
+
     if (!check.valid || !p) {
       const code = check.errorCode ?? "INVALID_TOKEN";
       const [status, fallback] = REJECTIONS[code];
@@ -88,7 +89,7 @@ export async function POST(request: NextRequest) {
       });
     }
   } catch (error) {
-    if (!(error instanceof ScanStoreError || error instanceof EventStoreError)) throw error;
+    if (!(error instanceof ScanStoreError || error instanceof EventStoreError || error instanceof ConfigError)) throw error;
     // Nothing was recorded. Answer in the scanner's own shape so staff see why and can scan again.
     const timestamp = new Date().toISOString();
     return jsonError(error.message, error instanceof ScanStoreError ? error.status : 503, {

@@ -20,16 +20,16 @@ ON CONFLICT (level) DO NOTHING;
 
 -- 3. Seed Sections
 INSERT INTO public.sections (id, major_id, year_level_id, section_name) VALUES
-    ('s1111111-1111-1111-1111-111111111111', '11111111-1111-1111-1111-111111111111', 'cccccccc-cccc-cccc-cccc-cccccccccccc', 'BA-MM 3-1'),
-    ('s2222222-2222-2222-2222-222222222222', '22222222-2222-2222-2222-222222222222', 'dddddddd-dddd-dddd-dddd-dddddddddddd', 'BA-FM 4-1'),
-    ('s3333333-3333-3333-3333-333333333333', '33333333-3333-3333-3333-333333333333', 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', 'BA-HRM 2-1'),
-    ('s4444444-4444-4444-4444-444444444444', '44444444-4444-4444-4444-444444444444', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'BA-OM 1-1')
+    ('e1111111-1111-1111-1111-111111111111', '11111111-1111-1111-1111-111111111111', 'cccccccc-cccc-cccc-cccc-cccccccccccc', 'BA-MM 3-1'),
+    ('e2222222-2222-2222-2222-222222222222', '22222222-2222-2222-2222-222222222222', 'dddddddd-dddd-dddd-dddd-dddddddddddd', 'BA-FM 4-1'),
+    ('e3333333-3333-3333-3333-333333333333', '33333333-3333-3333-3333-333333333333', 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', 'BA-HRM 2-1'),
+    ('e4444444-4444-4444-4444-444444444444', '44444444-4444-4444-4444-444444444444', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'BA-OM 1-1')
 ON CONFLICT DO NOTHING;
 
 -- 4. Seed Academic Years
 INSERT INTO public.academic_years (id, code, semester, is_active) VALUES
-    ('y2026111-1111-1111-1111-111111111111', '2026-2027', '1st', true),
-    ('y2026222-2222-2222-2222-222222222222', '2026-2027', '2nd', false)
+    ('f2026111-1111-1111-1111-111111111111', '2026-2027', '1st', true),
+    ('f2026222-2222-2222-2222-222222222222', '2026-2027', '2nd', false)
 ON CONFLICT (code, semester) DO NOTHING;
 
 -- 5. Seed System Settings

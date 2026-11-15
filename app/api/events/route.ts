@@ -9,7 +9,9 @@ import { eventInputSchema } from "@/lib/validation";
 export async function GET(request: NextRequest) {
   const admin = getAdmin(request);
   try {
-    const events = (await listEvents()).filter((e) => admin || e.status === "published");
+    const all = await listEvents();
+    // Students get published events only, without the organizer's email address.
+    const events = admin ? all : all.filter((e) => e.status === "published").map((e) => ({ ...e, organizer_id: "" }));
     return NextResponse.json({ events, serverTime: new Date().toISOString() }, { headers: { "Cache-Control": "no-store" } });
   } catch (e) {
     return jsonError(e instanceof EventStoreError ? e.message : "Couldn't load the events.", 503);

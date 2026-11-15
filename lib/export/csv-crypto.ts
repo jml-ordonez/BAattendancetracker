@@ -1,4 +1,5 @@
 import crypto from "crypto";
+import { serverSecret } from "@/lib/config/secrets";
 import type { CSVAttendanceRow } from "./csv-generator";
 
 /**
@@ -44,12 +45,7 @@ export interface DecryptCSVResult {
 }
 
 function getSystemSecret(): string {
-  return (
-    process.env.ADMIN_SESSION_SECRET ||
-    process.env.QR_HMAC_SECRET_KEY ||
-    process.env.QR_3DES_SECRET_KEY ||
-    "ba-attendance-dev-csv-secret"
-  );
+  return serverSecret(["ADMIN_SESSION_SECRET", "QR_HMAC_SECRET_KEY", "QR_3DES_SECRET_KEY"], "ba-attendance-dev-csv-secret", "Encrypted reports");
 }
 
 function deriveKey(secretOrPass: string, salt: Buffer): Buffer {

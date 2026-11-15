@@ -12,13 +12,6 @@ export const MAJORS: Record<string, string> = {
   "BSBA-OM": "BSBA in Operations Management",
 };
 
-export const MAJOR_SHORT: Record<string, string> = {
-  "BSBA-MM": "Marketing",
-  "BSBA-FM": "Financial",
-  "BSBA-HRM": "Human Resource",
-  "BSBA-OM": "Operations",
-};
-
 export const YEAR_LEVELS = ["1st Year", "2nd Year", "3rd Year", "4th Year"] as const;
 
 export const STUDENT_ID_PATTERN = /^(?:\d{10}|\d{4}-\d{5}-BA)$/;
