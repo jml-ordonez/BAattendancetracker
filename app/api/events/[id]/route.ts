@@ -17,6 +17,7 @@ const VERB = { published: "Published", draft: "Unpublished", cancelled: "Cancell
 const NOT_FOUND = "This event no longer exists. It may have been deleted; refresh the list.";
 
 const sameInstant = (a: string, b: string) => new Date(a).getTime() === new Date(b).getTime();
+const sameOptionalInstant = (a?: string | null, b?: string | null) => (a && b ? sameInstant(a, b) : !a && !b);
 
 /** Loads the event named in the URL, or the response to send instead. */
 async function load(params: Params["params"]): Promise<BAEvent | NextResponse> {
@@ -104,12 +105,21 @@ export async function PUT(request: NextRequest, { params }: Params) {
       return jsonError(message, 409, { fieldErrors: { title: message } });
     }
 
+    // Left out of the request: keep what the event has, but it must still open before the new start.
+    const opens = v.registrationOpens === undefined ? current.registration_opens_at ?? null : v.registrationOpens;
+    if (v.registrationOpens === undefined && opens && new Date(opens).getTime() >= start.getTime()) {
+      const message = "Registration must open before the event starts. Choose a new registration time.";
+      return jsonError(message, 400, { fieldErrors: { registrationOpens: message } });
+    }
+    const opensChanged = !sameOptionalInstant(opens, current.registration_opens_at);
+
     const changed = [
       v.title !== current.title && "title",
       v.description !== current.description && "description",
       v.venue !== current.venue && "venue",
       timesChanged && "schedule",
       graceChanged && "grace period",
+      opensChanged && "registration opens",
     ].filter(Boolean) as string[];
     if (changed.length === 0) return NextResponse.json({ event: current, changed });
 
@@ -119,6 +129,7 @@ export async function PUT(request: NextRequest, { params }: Params) {
       venue: v.venue,
       start_time: start.toISOString(),
       end_time: end.toISOString(),
+      registration_opens_at: opens ? new Date(opens).toISOString() : null,
       ...(timesChanged || graceChanged ? { sessions: [singleSession(current.id, start, end, v.gracePeriodMins, sessions[0])] } : {}),
     });
     if (!event) return jsonError(NOT_FOUND, 404);

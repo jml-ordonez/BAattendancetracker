@@ -47,6 +47,8 @@ export interface BAEvent {
   venue: string;
   start_time: string;
   end_time: string;
+  /** When students may start registering and getting passes. Null or absent: as soon as the event is published. */
+  registration_opens_at?: string | null;
   organizer_id: string;
   organizer_name?: string;
   status: EventStatus;

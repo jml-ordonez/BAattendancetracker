@@ -34,6 +34,11 @@ export function singleSession(
   };
 }
 
+/** "Nov 20, 8:00 AM" in the department's time zone, for messages the server builds. */
+export function formatLocalDateTime(when: string | Date): string {
+  return new Intl.DateTimeFormat("en-PH", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZone: TIME_ZONE }).format(new Date(when));
+}
+
 /** Another event with the same title on the same local day, ignoring `exceptId` (the event being edited). */
 export function duplicateTitle(events: BAEvent[], title: string, start: Date, exceptId?: string): boolean {
   const day = localDay(start);

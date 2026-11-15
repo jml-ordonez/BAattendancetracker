@@ -2,13 +2,18 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 import { addEvent } from "../lib/events/store";
 import { POST } from "../app/api/students/register/route";
+import { POST as generatePass } from "../app/api/qr/generate/route";
 import type { BAEvent } from "../types/events";
 
 const HOUR = 60 * 60 * 1000;
 const OPEN_EVENT_ID = "11111111-aaaa-4aaa-8aaa-111111111111";
 const ENDED_EVENT_ID = "22222222-bbbb-4bbb-8bbb-222222222222";
+/** Starts in 3 days; registration opens tomorrow. */
+const LATER_EVENT_ID = "44444444-dddd-4ddd-8ddd-444444444444";
+/** Starts in 3 days; registration opened an hour ago. */
+const EARLY_EVENT_ID = "55555555-eeee-4eee-8eee-555555555555";
 
-function event(id: string, startOffsetH: number, status: BAEvent["status"] = "published"): BAEvent {
+function event(id: string, startOffsetH: number, status: BAEvent["status"] = "published", registrationOpensOffsetH?: number): BAEvent {
   const start = new Date(Date.now() + startOffsetH * HOUR);
   const iso = (offsetH: number) => new Date(start.getTime() + offsetH * HOUR).toISOString();
   return {
@@ -18,6 +23,7 @@ function event(id: string, startOffsetH: number, status: BAEvent["status"] = "pu
     venue: "Room 101",
     start_time: iso(0),
     end_time: iso(4),
+    ...(registrationOpensOffsetH === undefined ? {} : { registration_opens_at: new Date(Date.now() + registrationOpensOffsetH * HOUR).toISOString() }),
     organizer_id: "tests@ua.edu.ph",
     status,
     certificate_enabled: false,
@@ -71,6 +77,8 @@ describe("POST /api/students/register", () => {
     vi.stubEnv("SUPABASE_SECRET_KEY", "");
     await addEvent(event(OPEN_EVENT_ID, 1));
     await addEvent(event(ENDED_EVENT_ID, -24));
+    await addEvent(event(LATER_EVENT_ID, 72, "published", 24));
+    await addEvent(event(EARLY_EVENT_ID, 72, "published", -1));
   });
 
   beforeEach(() => {
@@ -190,6 +198,48 @@ describe("POST /api/students/register", () => {
       const results = await Promise.all([register(valid), register({ ...other, studentIdNumber: valid.studentIdNumber })]);
       expect(results.map((r) => r.status).sort()).toEqual([200, 409]);
     });
+  });
+
+  describe("registration opening time", () => {
+    const generate = (eventId: string) =>
+      generatePass(
+        new NextRequest("http://localhost/api/qr/generate", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            eventId,
+            sessionId: `${eventId.slice(0, 8)}-5555-4555-8555-555555555555`,
+            student: { name: "Juan Dela Cruz", idNumber: "2022001234", majorCode: "BSBA-MM", section: "MM-2A" },
+          }),
+        })
+      );
+
+    it("refuses registration before it opens, and says when it does", async () => {
+      const res = await register({ ...valid, eventId: LATER_EVENT_ID });
+      expect(res.status).toBe(403);
+      const body = await res.json();
+      expect(body.fieldErrors.eventId).toMatch(/Registration for this event opens on .+\. Come back then/);
+      expect(stored()).toBeUndefined();
+    });
+
+    it("lets students register ahead of the event once it has opened", async () => {
+      const res = await register({ ...valid, eventId: EARLY_EVENT_ID });
+      expect(res.status).toBe(200);
+    });
+
+    it("doesn't hand out a pass before registration opens, but does once it has", async () => {
+      const early = await generate(LATER_EVENT_ID);
+      expect(early.status).toBe(403);
+      expect((await early.json()).error).toMatch(/opens on/);
+
+      const open = await generate(EARLY_EVENT_ID);
+      expect(open.status).toBe(200);
+      expect(typeof (await open.json()).token).toBe("string");
+    });
+
+    function stored() {
+      return (globalThis as unknown as { __ba_students?: Map<string, unknown> }).__ba_students?.get(valid.studentIdNumber);
+    }
   });
 
   it("rejects a body that isn't JSON", async () => {

@@ -68,8 +68,9 @@ const pass = (eventId: string, sessionId: string) =>
     expirySeconds: 3600,
   }).token;
 
-const scan = (token: string, eventId = EVENT_A, sessionId = SESSION_A) =>
-  verifyScan(request("/api/qr/verify", { method: "POST", body: { token, eventId, sessionId } }));
+/** `purpose` is what the scanner is set to; pass null to leave it out of the request. */
+const scan = (token: string, eventId = EVENT_A, sessionId = SESSION_A, purpose: string | null = "time_in") =>
+  verifyScan(request("/api/qr/verify", { method: "POST", body: { token, eventId, sessionId, ...(purpose ? { expectedPurpose: purpose } : {}) } }));
 const records = async () => (await (await listRecords(request("/api/attendance/records", { method: "GET" }))).json()).records;
 
 describe("Scanning and the records list", () => {
@@ -105,6 +106,37 @@ describe("Scanning and the records list", () => {
     expect(again.success).toBe(false);
     expect(again.status).toBe("DUPLICATE_SCAN");
     expect(await records()).toHaveLength(1);
+  });
+
+  it("records a departure when the scanner is set to Time-out", async () => {
+    const token = pass(EVENT_A, SESSION_A);
+    await scan(token, EVENT_A, SESSION_A, "time_in");
+    const out = await (await scan(token, EVENT_A, SESSION_A, "time_out")).json();
+    expect(out.success).toBe(true);
+    expect(out.details.action).toBe("time_out");
+    expect((await records()).map((r: { action: string }) => r.action).sort()).toEqual(["time_in", "time_out"]);
+  });
+
+  it("tells staff to switch the scanner when a student is scanned in the wrong mode", async () => {
+    const token = pass(EVENT_A, SESSION_A);
+    await scan(token);
+    const again = await (await scan(token)).json();
+    expect(again.message).toMatch(/switch the scanner to Time-out/);
+    const noIn = await (await scan(pass(EVENT_A, SESSION_A), EVENT_A, SESSION_A, "time_out")).json();
+    expect(noIn.success).toBe(true); // this student did time in above, so a time-out is valid
+    await clearRecords(request("/api/attendance/records", { method: "DELETE" }));
+    const stranger = await (await scan(pass(EVENT_A, SESSION_A), EVENT_A, SESSION_A, "time_out")).json();
+    expect(stranger.success).toBe(false);
+    expect(stranger.message).toMatch(/switch the scanner to Time-in/i);
+  });
+
+  it("needs the scanner to say Time-in or Time-out; there is no auto mode", async () => {
+    for (const purpose of [null, "attendance", "auto"]) {
+      const res = await scan(pass(EVENT_A, SESSION_A), EVENT_A, SESSION_A, purpose);
+      expect(res.status).toBe(400);
+      expect((await res.json()).error).toMatch(/time-in or time-out/i);
+    }
+    expect(await records()).toEqual([]);
   });
 
   it("clears every record and they stay cleared", async () => {

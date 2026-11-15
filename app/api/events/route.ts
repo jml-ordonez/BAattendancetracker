@@ -41,6 +41,7 @@ export async function POST(request: NextRequest) {
       venue: v.venue,
       start_time: start.toISOString(),
       end_time: end.toISOString(),
+      registration_opens_at: v.registrationOpens ? new Date(v.registrationOpens).toISOString() : null,
       organizer_id: admin.email,
       organizer_name: admin.name,
       status: v.publish ? "published" : "draft",
@@ -61,7 +62,7 @@ export async function POST(request: NextRequest) {
       target: event.title,
       outcome: "success",
       ip: clientIp(request),
-      details: { venue: event.venue, start: event.start_time },
+      details: { venue: event.venue, start: event.start_time, registrationOpens: event.registration_opens_at ?? null },
     });
     return NextResponse.json({ event }, { status: 201 });
   } catch (e) {

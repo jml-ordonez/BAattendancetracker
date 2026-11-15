@@ -1,7 +1,8 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
-import { registrableEvents } from "@/lib/attendance/schedule";
+import { registrableEvents, registrationIsOpen, registrationOpensAt } from "@/lib/attendance/schedule";
 import { EventStoreError, getEvent } from "@/lib/events/store";
+import { formatLocalDateTime } from "@/lib/events/windows";
 import { clientIp, jsonError, parseBody } from "@/lib/http";
 import { saveStudent, StudentStoreError } from "@/lib/students/store";
 import { deriveMajorFromSection, studentRegistrationSchema, yearLevelForSection } from "@/lib/validation";
@@ -46,6 +47,10 @@ export async function POST(request: NextRequest) {
 
   try {
     const event = await getEvent(eventId);
+    if (event?.status === "published" && !registrationIsOpen(event)) {
+      const message = `Registration for this event opens on ${formatLocalDateTime(registrationOpensAt(event)!)}. Come back then to get your pass.`;
+      return jsonError(message, 403, { fieldErrors: { eventId: message } });
+    }
     if (!event || registrableEvents([event]).length === 0) {
       return jsonError("This event is no longer open for attendance. Choose another.", 404, {
         fieldErrors: { eventId: "This event is no longer open for attendance. Choose another." },

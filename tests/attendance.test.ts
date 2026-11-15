@@ -21,7 +21,7 @@ import {
 } from "../lib/validation";
 import { addEvent, deleteEvent, findSession, getEvent, listEvents, updateEvent, type SessionMatch } from "../lib/events/store";
 import { duplicateTitle, singleSession } from "../lib/events/windows";
-import { liveSessionsOf, registrableEvents } from "../lib/attendance/schedule";
+import { liveSessionsOf, registrableEvents, registrationIsOpen, upcomingRegistrations } from "../lib/attendance/schedule";
 
 // Seeded "Morning keynote": check-in 08:00–09:00 (UTC+8), 15 min grace, check-out 12:00–13:00.
 const EVENT = "a2b4c6d8-1111-2222-3333-444455556666";
@@ -33,7 +33,7 @@ let found: SessionMatch | null = null;
 beforeEach(async () => {
   found = await findSession(EVENT, SESSION);
 });
-const scan = (purpose: "time_in" | "time_out" | "attendance", time: string, extra: Partial<Parameters<typeof recordAttendance>[0]> = {}) =>
+const scan = (purpose: "time_in" | "time_out", time: string, extra: Partial<Parameters<typeof recordAttendance>[0]> = {}) =>
   recordAttendance({ student, eventId: EVENT, sessionId: SESSION, found, purpose, officer: "Test", method: "qr", now: at(time), ...extra });
 
 describe("Attendance pipeline", () => {
@@ -80,39 +80,49 @@ describe("Attendance pipeline", () => {
     expect((await scan("time_out", "12:31", { token: { ...token, id: "tok-2" } })).success).toBe(true);
   });
 
-  it("uses one pass for check-in, then check-out, then refuses", async () => {
-    const first = await scan("attendance", "08:05");
+  it("uses one pass for time-in at the entrance and time-out at the exit", async () => {
+    const first = await scan("time_in", "08:05");
     expect(first.status).toBe("SUCCESS_ON_TIME");
     expect(first.details?.action).toBe("time_in");
 
-    // A double read at the door seconds later is not a check-out, and says how to time out.
-    const repeat = await scan("attendance", "08:05:30");
-    expect(repeat.status).toBe("DUPLICATE_SCAN");
-    expect(repeat.message).toMatch(/scan again in 30 seconds, or switch the scanner to Time-out/);
-
-    const second = await scan("attendance", "12:30");
+    const second = await scan("time_out", "12:30");
     expect(second.status).toBe("SUCCESS_CHECKOUT");
     expect(second.details?.action).toBe("time_out");
-
-    const third = await scan("attendance", "12:40");
-    expect(third.success).toBe(false);
-    expect(third.message).toMatch(/already completed attendance/);
     expect(await listScans()).toHaveLength(2);
   });
 
-  it("times out a short stay once the double-read window has passed", async () => {
-    await scan("attendance", "08:05");
-    const out = await scan("attendance", "08:08");
-    expect(out.success).toBe(true);
-    expect(out.details?.action).toBe("time_out");
-    expect(out.details?.isEarlyDeparture).toBe(true);
+  it("tells staff to switch to Time-out when a student who already timed in is scanned at the entrance", async () => {
+    await scan("time_in", "08:05");
+    const again = await scan("time_in", "08:05:30");
+    expect(again.success).toBe(false);
+    expect(again.status).toBe("DUPLICATE_SCAN");
+    expect(again.message).toMatch(/already timed in/);
+    expect(again.message).toMatch(/switch the scanner to Time-out/);
+    expect(await listScans()).toHaveLength(1);
   });
 
-  it("times out at once when staff set the scanner to Time-out", async () => {
-    await scan("attendance", "08:05");
-    const out = await scan("time_out", "08:05:20");
+  it("tells staff to switch to Time-in when someone with no time-in is scanned at the exit", async () => {
+    const out = await scan("time_out", "12:10");
+    expect(out.status).toBe("STUDENT_INELIGIBLE");
+    expect(out.message).toMatch(/switch the scanner to Time-in/i);
+  });
+
+  it("refuses a second time-out, and doesn't suggest switching once they have left", async () => {
+    await scan("time_in", "08:05");
+    await scan("time_out", "12:30");
+    const again = await scan("time_out", "12:40");
+    expect(again.status).toBe("DUPLICATE_SCAN");
+    expect(again.message).toMatch(/already timed out/);
+    const lateIn = await scan("time_in", "12:45");
+    expect(lateIn.status).toBe("DUPLICATE_SCAN");
+    expect(lateIn.message).not.toMatch(/switch the scanner/);
+  });
+
+  it("records a short stay as an early departure", async () => {
+    await scan("time_in", "08:05");
+    const out = await scan("time_out", "08:08");
     expect(out.success).toBe(true);
-    expect(out.details?.action).toBe("time_out");
+    expect(out.details?.isEarlyDeparture).toBe(true);
   });
 
   it("pairs check-in and check-out into one roll entry", async () => {
@@ -296,6 +306,66 @@ describe("Events a student can register for", () => {
     const all = await listEvents();
     expect(liveSessionsOf(all, EVENT, new Date("2026-10-24T07:30:00+08:00"))).toHaveLength(2);
     expect(liveSessionsOf(all, EVENT, new Date("2026-10-24T14:00:00+08:00"))).toHaveLength(1);
+  });
+});
+
+describe("When registration opens", () => {
+  const base = async () => structuredClone((await getEvent(EVENT))!);
+  const noon = new Date("2026-10-20T12:00:00+08:00");
+
+  it("opens as soon as the event is published when no time is set", async () => {
+    const e = await base();
+    expect(registrationIsOpen(e, noon)).toBe(true);
+    expect(registrableEvents([e], noon)).toHaveLength(1);
+    expect(upcomingRegistrations([e], noon)).toHaveLength(0);
+  });
+
+  it("keeps the event out of the list until the opening time, then lets students in", async () => {
+    const e = { ...(await base()), registration_opens_at: "2026-10-23T08:00:00+08:00" };
+    expect(registrationIsOpen(e, new Date("2026-10-23T07:59:00+08:00"))).toBe(false);
+    expect(registrableEvents([e], new Date("2026-10-23T07:59:00+08:00"))).toHaveLength(0);
+    expect(upcomingRegistrations([e], new Date("2026-10-23T07:59:00+08:00")).map((x) => x.id)).toEqual([EVENT]);
+
+    expect(registrationIsOpen(e, new Date("2026-10-23T08:00:00+08:00"))).toBe(true);
+    expect(registrableEvents([e], new Date("2026-10-23T08:00:00+08:00"))).toHaveLength(1);
+    expect(upcomingRegistrations([e], new Date("2026-10-23T08:00:00+08:00"))).toHaveLength(0);
+  });
+
+  it("never lists an unpublished event, open or not", async () => {
+    const e = { ...(await base()), status: "draft" as const, registration_opens_at: "2026-10-23T08:00:00+08:00" };
+    expect(registrableEvents([e], noon)).toHaveLength(0);
+    expect(upcomingRegistrations([e], noon)).toHaveLength(0);
+  });
+});
+
+describe("Registration opening time in the event form", () => {
+  const inHours = (h: number) => new Date(Date.now() + h * 3600000).toISOString();
+  const base = { title: "Marketing Week Opening", description: "Opening program for all year levels.", venue: "AVR 2", start: inHours(48), end: inHours(51), gracePeriodMins: 15, publish: true };
+  const issue = (v: object) => eventInputSchema.safeParse({ ...base, ...v }).error?.issues.find((i) => i.path[0] === "registrationOpens")?.message;
+
+  it("is optional", () => {
+    expect(eventInputSchema.safeParse(base).success).toBe(true);
+    expect(eventInputSchema.safeParse({ ...base, registrationOpens: null }).success).toBe(true);
+  });
+
+  it("accepts a time before the event starts", () => {
+    expect(issue({ registrationOpens: inHours(24) })).toBeUndefined();
+    expect(issue({ registrationOpens: inHours(-3) })).toBeUndefined();
+  });
+
+  it("refuses a time at or after the start", () => {
+    expect(issue({ registrationOpens: base.start })).toBe("Registration must open before the event starts.");
+    expect(issue({ registrationOpens: inHours(49) })).toBe("Registration must open before the event starts.");
+  });
+
+  it("refuses a time more than 90 days ahead, which is usually a typo", () => {
+    expect(issue({ registrationOpens: inHours(48 - 24 * 91) })).toMatch(/up to 90 days/);
+    expect(issue({ registrationOpens: inHours(48 - 24 * 89) })).toBeUndefined();
+  });
+
+  it("is checked on edits too", () => {
+    const r = eventUpdateSchema.safeParse({ ...base, registrationOpens: inHours(50) });
+    expect(r.error?.issues[0]?.path[0]).toBe("registrationOpens");
   });
 });
 

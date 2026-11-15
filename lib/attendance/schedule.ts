@@ -59,11 +59,28 @@ export function graceEnds(session: EventSession): Date {
   return new Date(new Date(session.time_in_start).getTime() + session.grace_period_mins * 60000);
 }
 
-/** Published events a student can still register for: at least one session hasn't ended. Soonest first. */
+/** When registration opens for the event, or null when it opens as soon as the event is published. */
+export function registrationOpensAt(event: BAEvent): Date | null {
+  return event.registration_opens_at ? new Date(event.registration_opens_at) : null;
+}
+
+/** Whether students may register for the event yet (it must also be published; see `registrableEvents`). */
+export function registrationIsOpen(event: BAEvent, now = new Date()): boolean {
+  const opens = registrationOpensAt(event);
+  return !opens || now.getTime() >= opens.getTime();
+}
+
+const hasSessionLeft = (event: BAEvent, now: Date) => (event.sessions ?? []).some((s) => sessionState(s, now) !== "ended");
+const bySoonest = (a: BAEvent, b: BAEvent) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime();
+
+/** Published events a student can register for now: registration is open and a session hasn't ended. Soonest first. */
 export function registrableEvents(events: BAEvent[], now = new Date()): BAEvent[] {
-  return events
-    .filter((e) => e.status === "published" && (e.sessions ?? []).some((s) => sessionState(s, now) !== "ended"))
-    .sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime());
+  return events.filter((e) => e.status === "published" && hasSessionLeft(e, now) && registrationIsOpen(e, now)).sort(bySoonest);
+}
+
+/** Published events whose registration hasn't opened yet, so students can see when it will. Soonest first. */
+export function upcomingRegistrations(events: BAEvent[], now = new Date()): BAEvent[] {
+  return events.filter((e) => e.status === "published" && hasSessionLeft(e, now) && !registrationIsOpen(e, now)).sort(bySoonest);
 }
 
 /** The sessions of one event that haven't ended, in time order. */

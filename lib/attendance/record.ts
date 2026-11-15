@@ -1,20 +1,11 @@
-import type { ScanVerificationResult, TokenPurpose } from "@/types/qr";
-import type { AttendanceScan } from "@/types/attendance";
+import type { ScanVerificationResult } from "@/types/qr";
+import type { AttendanceScan, ScanAction } from "@/types/attendance";
 import { evaluateAttendance } from "@/lib/rules/attendance-rules";
 import type { SessionMatch } from "@/lib/events/store";
 import { addScan, consumeToken, findStudentScans, ScanConflictError } from "@/lib/attendance/store";
 
 /** How early before the time-in window a student may time in. */
 export const CHECK_IN_OPENS_EARLY_MINS = 60;
-
-/**
- * With one pass for time-in and time-out, a second scan this soon after timing
- * in is an accidental double read at the door, not a time-out. Kept short: the
- * scanner already ignores a pass that stays in front of the camera, and staff
- * can switch the scanner to "Time-out" to record a departure straight away.
- * (Was 5 minutes, which refused real time-outs of short stays.)
- */
-export const MIN_SECS_BEFORE_CHECKOUT = 60;
 
 const TIME_ZONE = process.env.APP_TIMEZONE || "Asia/Manila";
 
@@ -48,7 +39,8 @@ export interface RecordAttendanceInput {
   sessionId: string;
   /** The event and session, looked up by the caller (`findSession`); null when they no longer exist. */
   found: SessionMatch | null;
-  purpose: TokenPurpose;
+  /** What the scanner is set to record. Staff choose it; the pass doesn't decide. */
+  purpose: ScanAction;
   officer: string;
   method: "qr" | "manual";
   /** Present for QR scans: enforces single use. */
@@ -84,32 +76,7 @@ export async function recordAttendance(input: RecordAttendanceInput): Promise<Re
   const now = input.now ?? new Date();
   const { timeIn, timeOut } = await findStudentScans(student.idNumber, input.sessionId);
 
-  // One pass for both: time in if there is no time-in yet, otherwise time out.
-  let purpose = input.purpose;
-  if (purpose === "attendance") {
-    if (timeIn && timeOut) {
-      return fail(
-        "DUPLICATE_SCAN",
-        `${timeIn.studentName} has already completed attendance: timed in at ${clockTime(timeIn.timestamp)} and out at ${clockTime(timeOut.timestamp)}.`,
-        student
-      );
-    }
-    const sinceTimeIn = timeIn ? now.getTime() - new Date(timeIn.timestamp).getTime() : Infinity;
-    if (timeIn && sinceTimeIn < MIN_SECS_BEFORE_CHECKOUT * 1000) {
-      const wait = Math.max(1, Math.ceil((MIN_SECS_BEFORE_CHECKOUT * 1000 - sinceTimeIn) / 1000));
-      return fail(
-        "DUPLICATE_SCAN",
-        `${timeIn.studentName} just timed in at ${clockTime(timeIn.timestamp)}, so this scan was ignored as a double read. ` +
-          `If they are leaving, scan again in ${wait} second${wait === 1 ? "" : "s"}, or switch the scanner to Time-out.`,
-        student
-      );
-    }
-    purpose = timeIn ? "time_out" : "time_in";
-  }
-
-  if (purpose !== "time_in" && purpose !== "time_out") {
-    return fail("TOKEN_INVALID", "This pass type is not accepted at the door.", student);
-  }
+  const { purpose } = input;
 
   const { found } = input;
   if (!found || found.event.id !== input.eventId || found.session.id !== input.sessionId) return fail("SESSION_NOT_FOUND", "This event session no longer exists.", student);
@@ -132,10 +99,16 @@ export async function recordAttendance(input: RecordAttendanceInput): Promise<Re
   }
 
   if (purpose === "time_in" && timeIn) {
-    return fail("DUPLICATE_SCAN", `${student.name} already timed in at ${clockTime(timeIn.timestamp)}.`, student);
+    return fail(
+      "DUPLICATE_SCAN",
+      `${student.name} already timed in at ${clockTime(timeIn.timestamp)}.${timeOut ? "" : " If they are leaving, switch the scanner to Time-out."}`,
+      student
+    );
   }
   if (purpose === "time_out") {
-    if (!timeIn) return fail("STUDENT_INELIGIBLE", "No time-in on record for this session, so there is nothing to time out.", student);
+    if (!timeIn) {
+      return fail("STUDENT_INELIGIBLE", "No time-in on record for this session, so there is nothing to time out. Switch the scanner to Time-in to check them in first.", student);
+    }
     if (timeOut) {
       return fail("DUPLICATE_SCAN", `${student.name} already timed out at ${clockTime(timeOut.timestamp)}.`, student);
     }

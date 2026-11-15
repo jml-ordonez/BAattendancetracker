@@ -7,13 +7,13 @@ import type { ScanVerificationResult } from "@/types/qr";
 import { cn } from "@/lib/utils";
 import { formatDuration, formatTimeSeconds } from "@/lib/format";
 
-/** Auto: a pass times in first and times out on a later scan. Time-in / Time-out: every scan records that. */
-export type ScanMode = "auto" | "time_in" | "time_out";
+/** What every scan records. Staff set it at the door: Time-in at the entrance, Time-out at the exit. */
+export type ScanMode = "time_in" | "time_out";
 
 interface QRScannerProps {
   eventId: string;
   sessionId: string;
-  mode?: ScanMode;
+  mode: ScanMode;
   disabled?: boolean;
   onScanned?: (result: ScanVerificationResult) => void;
   onOpenManualEntry?: () => void;
@@ -50,7 +50,7 @@ function cameraErrorName(err: unknown): string {
   return text.match(/(NotAllowedError|PermissionDeniedError|NotFoundError|DevicesNotFoundError|OverconstrainedError|NotReadableError|TrackStartError|InsecureContext)/)?.[1] ?? "Unknown";
 }
 
-export function QRScanner({ eventId, sessionId, mode = "auto", disabled, onScanned, onOpenManualEntry }: QRScannerProps) {
+export function QRScanner({ eventId, sessionId, mode, disabled, onScanned, onOpenManualEntry }: QRScannerProps) {
   const [camera, setCamera] = useState<"starting" | "on" | "off" | "error">("starting");
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [result, setResult] = useState<ScanVerificationResult | null>(null);
@@ -157,7 +157,7 @@ export function QRScanner({ eventId, sessionId, mode = "auto", disabled, onScann
           token,
           eventId: c.eventId,
           sessionId: c.sessionId,
-          ...(c.mode !== "auto" ? { expectedPurpose: c.mode } : {}),
+          expectedPurpose: c.mode,
         }),
         signal: AbortSignal.timeout(VERIFY_TIMEOUT_MS),
       });
@@ -344,10 +344,8 @@ export function QRScanner({ eventId, sessionId, mode = "auto", disabled, onScann
             {camera === "on" ? <span className="live-dot text-emerald-400" aria-hidden="true" /> : <CameraOff className="h-3.5 w-3.5" aria-hidden="true" />}
             {camera === "on"
               ? mode === "time_in"
-                ? "Scanning · time-in only"
-                : mode === "time_out"
-                  ? "Scanning · time-out only"
-                  : "Scanning passes · in or out"
+                ? "Scanning · Time-in"
+                : "Scanning · Time-out"
               : camera === "starting"
                 ? "Starting camera…"
                 : "Camera off"}
@@ -434,9 +432,7 @@ export function QRScanner({ eventId, sessionId, mode = "auto", disabled, onScann
               <p className="text-sm text-ink-soft">
                 {mode === "time_out"
                   ? "Hold the student’s pass inside the frame to time them out."
-                  : mode === "time_in"
-                    ? "Hold the student’s pass inside the frame to time them in."
-                    : "Hold the student’s pass inside the frame. The first scan times them in; the same pass scanned again (after a minute) times them out."}
+                  : "Hold the student’s pass inside the frame to time them in."}
               </p>
             </div>
           )}

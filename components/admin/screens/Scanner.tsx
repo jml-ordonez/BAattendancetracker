@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useMemo, useState } from "react";
-import { ArrowLeftRight, CheckCircle2, Info, LogIn, LogOut } from "lucide-react";
+import { CheckCircle2, Info, LogIn, LogOut } from "lucide-react";
 import { useAdminData } from "@/components/admin/AdminData";
 import { PageHeader } from "@/components/admin/PageHeader";
 import { SessionSelect } from "@/components/admin/SessionSelect";
@@ -12,13 +12,11 @@ import { card } from "@/components/ui/styles";
 import { graceEnds, pickSession, sessionState, OPENS_EARLY_MINS } from "@/lib/attendance/schedule";
 import { formatDateTime, formatStudentId, formatTime, plural } from "@/lib/format";
 import { cn } from "@/lib/utils";
-import type { TokenPurpose } from "@/types/qr";
 
 export function ScannerScreen() {
   const { events, scans, loaded, refreshScans } = useAdminData();
   const [chosenId, setChosenId] = useState<string | null>(null);
-  const [purpose, setPurpose] = useState<TokenPurpose>("time_in");
-  const [mode, setMode] = useState<ScanMode>("auto");
+  const [mode, setMode] = useState<ScanMode>("time_in");
   const [manualOpen, setManualOpen] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
 
@@ -45,7 +43,7 @@ export function ScannerScreen() {
     <>
       <PageHeader
         title="Scanner"
-        description="Hold each student’s pass up to the camera. The first scan checks them in and the same pass scanned later checks them out, each checked against the session schedule."
+        description="Set the mode for this door (Time-in at the entrance, Time-out at the exit), then hold each student’s pass up to the camera. Each scan is checked against the session schedule."
       />
 
       <div className="space-y-5">
@@ -55,73 +53,41 @@ export function ScannerScreen() {
           ) : (
             <div className="h-[4.25rem] animate-pulse rounded-lg bg-paper" />
           )}
-          <div className="flex flex-wrap gap-5">
-            <div>
-              <p className="mb-1.5 text-sm font-medium text-ink" id="mode-label">
-                Camera scans record
-              </p>
-              <div role="radiogroup" aria-labelledby="mode-label" className="grid grid-cols-3 gap-1 rounded-lg bg-paper p-1">
-                {(
-                  [
-                    ["auto", "Auto", ArrowLeftRight],
-                    ["time_in", "Time-in", LogIn],
-                    ["time_out", "Time-out", LogOut],
-                  ] as const
-                ).map(([value, label, Icon]) => (
-                  <button
-                    key={value}
-                    type="button"
-                    role="radio"
-                    aria-checked={mode === value}
-                    onClick={() => setMode(value)}
-                    className={cn(
-                      "press flex h-10 items-center justify-center gap-2 rounded-md px-4 text-sm font-semibold",
-                      mode === value ? "bg-brand text-ink shadow-sm" : "text-ink-soft hover:text-ink"
-                    )}
-                  >
-                    <Icon className="h-4 w-4" aria-hidden="true" />
-                    {label}
-                  </button>
-                ))}
-              </div>
-            </div>
-            <div>
-              <p className="mb-1.5 text-sm font-medium text-ink" id="purpose-label">
-                Manual entry records
-              </p>
-              <div role="radiogroup" aria-labelledby="purpose-label" className="grid grid-cols-2 gap-1 rounded-lg bg-paper p-1">
-                {(
-                  [
-                    ["time_in", "Time-in", LogIn],
-                    ["time_out", "Time-out", LogOut],
-                  ] as const
-                ).map(([value, label, Icon]) => (
-                  <button
-                    key={value}
-                    type="button"
-                    role="radio"
-                    aria-checked={purpose === value}
-                    onClick={() => setPurpose(value)}
-                    className={cn(
-                      "press flex h-10 items-center justify-center gap-2 rounded-md px-5 text-sm font-semibold",
-                      purpose === value ? "bg-brand text-ink shadow-sm" : "text-ink-soft hover:text-ink"
-                    )}
-                  >
-                    <Icon className="h-4 w-4" aria-hidden="true" />
-                    {label}
-                  </button>
-                ))}
-              </div>
+          <div>
+            <p className="mb-1.5 text-sm font-medium text-ink" id="mode-label">
+              Scanner mode
+            </p>
+            <div role="radiogroup" aria-labelledby="mode-label" className="grid grid-cols-2 gap-1 rounded-lg bg-paper p-1">
+              {(
+                [
+                  ["time_in", "Time-in", LogIn],
+                  ["time_out", "Time-out", LogOut],
+                ] as const
+              ).map(([value, label, Icon]) => (
+                <button
+                  key={value}
+                  type="button"
+                  role="radio"
+                  aria-checked={mode === value}
+                  onClick={() => setMode(value)}
+                  className={cn(
+                    "press flex h-11 items-center justify-center gap-2 rounded-md px-6 text-sm font-semibold",
+                    mode === value ? "bg-brand text-ink shadow-sm" : "text-ink-soft hover:text-ink"
+                  )}
+                >
+                  <Icon className="h-4 w-4" aria-hidden="true" />
+                  {label}
+                </button>
+              ))}
             </div>
           </div>
 
           {pick && (
             <p className="text-sm text-muted lg:col-span-2">
-              {mode === "auto"
-                ? "Auto: a pass times in on its first scan and times out when scanned again at least a minute later. Use Time-out at the exit for students leaving soon after arriving."
-                : mode === "time_in"
-                  ? "Time-in only: every scan records an arrival. Passes that already timed in are refused."
-                  : "Time-out only: every scan records a departure, even right after the time-in."}
+              {mode === "time_in"
+                ? "Time-in: every scan checks a student in. Use it at the entrance. A student who already timed in is refused."
+                : "Time-out: every scan records a departure. Use it at the exit. The student must have timed in first."}{" "}
+              This applies to the camera and to manual entry.
             </p>
           )}
 
@@ -208,7 +174,7 @@ export function ScannerScreen() {
           eventId={pick.event.id}
           sessionId={pick.session.id}
           sessionLabel={`${pick.event.title} · ${pick.session.title}`}
-          purpose={purpose}
+          purpose={mode}
           onSuccess={(msg) => {
             flash(msg);
             refreshScans();

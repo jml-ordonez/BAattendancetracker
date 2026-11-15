@@ -2,6 +2,8 @@ import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import { generateStudentQRToken } from "@/lib/tokens/qr-token";
 import { findSession } from "@/lib/events/store";
+import { formatLocalDateTime } from "@/lib/events/windows";
+import { registrationIsOpen, registrationOpensAt } from "@/lib/attendance/schedule";
 import { jsonError, parseBody } from "@/lib/http";
 import { majorCodeSchema, personNameSchema, sectionSchema, studentIdSchema } from "@/lib/validation";
 
@@ -34,6 +36,10 @@ export async function POST(request: NextRequest) {
   const found = await findSession(eventId, sessionId);
   if (!found || found.event.status !== "published") {
     return jsonError("This event is no longer open for attendance. Choose another event.", 404);
+  }
+
+  if (!registrationIsOpen(found.event)) {
+    return jsonError(`Registration for this event opens on ${formatLocalDateTime(registrationOpensAt(found.event)!)}. Come back then to get your pass.`, 403);
   }
 
   const nowSec = Math.floor(Date.now() / 1000);

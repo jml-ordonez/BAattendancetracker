@@ -9,9 +9,9 @@ import { btn } from "@/components/ui/styles";
 import { DynamicQRDisplay } from "@/components/student/DynamicQRDisplay";
 import { StudentRegisterModal } from "@/components/auth/StudentRegisterModal";
 import { setStudentEvent, useRegisteredStudent } from "@/lib/auth/session";
-import { graceEnds, liveSessionsOf, OPENS_EARLY_MINS, registrableEvents, sessionState } from "@/lib/attendance/schedule";
+import { graceEnds, liveSessionsOf, OPENS_EARLY_MINS, registrableEvents, sessionState, upcomingRegistrations } from "@/lib/attendance/schedule";
 import { useEvents } from "@/lib/client/events";
-import { formatDay, formatStudentId, formatTime } from "@/lib/format";
+import { formatDateTime, formatDay, formatStudentId, formatTime } from "@/lib/format";
 import { isKnownSection } from "@/lib/validation";
 import type { BAEvent } from "@/types/events";
 
@@ -154,9 +154,10 @@ export default function StudentQRPage() {
                     </span>
                   </p>
                   {active.state === "upcoming" && (
-                    <p className="mt-3 rounded-lg bg-brand-tint px-3 py-2 text-sm text-brand-ink">
-                      Time-in opens {OPENS_EARLY_MINS} minutes before the start, at{" "}
-                      {formatTime(new Date(new Date(active.session.time_in_start).getTime() - OPENS_EARLY_MINS * 60000).toISOString())}.
+                    <p className="mt-3 rounded-lg bg-brand-tint px-3 py-2 text-sm text-brand-ink" role="status">
+                      <span className="font-semibold">Your pass is ready.</span> Attendance opens{" "}
+                      {formatDateTime(new Date(new Date(active.session.time_in_start).getTime() - OPENS_EARLY_MINS * 60000).toISOString())}. Download the QR or
+                      keep this page, then show it at the door.
                     </p>
                   )}
                 </div>
@@ -204,6 +205,7 @@ function EventPicker({
   onCancel?: () => void;
 }) {
   const options = useMemo(() => registrableEvents(events), [events]);
+  const comingSoon = useMemo(() => upcomingRegistrations(events), [events]);
   // Default to the event taking attendance right now, else the next one.
   const suggested =
     options.find((e) => e.id !== currentId && e.sessions?.some((s) => sessionState(s) === "open"))?.id ?? options.find((e) => e.id !== currentId)?.id ?? options[0]?.id ?? "";
@@ -220,8 +222,12 @@ function EventPicker({
     return (
       <div className="rounded-xl bg-paper p-6 text-center" role="status">
         <CalendarDays className="mx-auto h-7 w-7 text-muted" aria-hidden="true" />
-        <p className="mt-3 font-semibold">No events are taking attendance</p>
-        <p className="mt-1 text-sm text-ink-soft">This page checks again every minute. When the department publishes an event, you can choose it here.</p>
+        <p className="mt-3 font-semibold">{comingSoon.length > 0 ? "Registration hasn’t opened yet" : "No events are taking attendance"}</p>
+        <p className="mt-1 text-sm text-ink-soft">
+          {comingSoon.length > 0
+            ? `“${comingSoon[0].title}” opens for registration ${formatDateTime(comingSoon[0].registration_opens_at!)}. This page checks again every minute.`
+            : "This page checks again every minute. When the department publishes an event, you can choose it here."}
+        </p>
         {onCancel && (
           <button type="button" onClick={onCancel} className={`${btn.secondary} mt-4`}>
             Back to my pass
@@ -252,6 +258,15 @@ function EventPicker({
               </option>
             );
           })}
+          {comingSoon.length > 0 && (
+            <optgroup label="Registration opens soon">
+              {comingSoon.map((ev) => (
+                <option key={ev.id} value={ev.id} disabled>
+                  {ev.title} · opens {formatDateTime(ev.registration_opens_at!)}
+                </option>
+              ))}
+            </optgroup>
+          )}
         </SelectField>
       </div>
       <div className="mt-4 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">

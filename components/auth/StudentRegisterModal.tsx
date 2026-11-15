@@ -8,9 +8,9 @@ import { Field, SelectField } from "@/components/ui/Field";
 import { btn } from "@/components/ui/styles";
 import { getRegisteredStudent, registerStudent } from "@/lib/auth/session";
 import { api, ApiError } from "@/lib/client/api";
-import { registrableEvents } from "@/lib/attendance/schedule";
+import { registrableEvents, upcomingRegistrations } from "@/lib/attendance/schedule";
 import { useEvents } from "@/lib/client/events";
-import { formatDay } from "@/lib/format";
+import { formatDateTime, formatDay } from "@/lib/format";
 import {
   YEAR_LEVELS,
   deriveMajorFromSection,
@@ -82,6 +82,8 @@ export function StudentRegisterModal({ isOpen, onClose, onSuccess, goToPass = tr
   const { events, error: eventsError, reload: reloadEvents } = useEvents(isOpen);
   const eventOptions = useMemo(() => (events ? registrableEvents(events) : null), [events]);
   const openEventIds = useMemo(() => (eventOptions ? new Set(eventOptions.map((e) => e.id)) : null), [eventOptions]);
+  /** Published events whose registration hasn't opened yet; shown, but not selectable. */
+  const comingSoon = useMemo(() => (events ? upcomingRegistrations(events) : []), [events]);
   // With only one event open there is nothing to choose: select it.
   const chosenEvent = eventId || (eventOptions?.length === 1 ? eventOptions[0].id : "");
 
@@ -341,7 +343,9 @@ export function StudentRegisterModal({ isOpen, onClose, onSuccess, goToPass = tr
                 : !eventOptions
                   ? "Loading events…"
                   : eventOptions.length === 0
-                    ? "No events are open for attendance right now. Check back when the department publishes one."
+                    ? comingSoon.length > 0
+                      ? `No events are open for registration yet. “${comingSoon[0].title}” opens ${formatDateTime(comingSoon[0].registration_opens_at!)}. Come back then to get your pass.`
+                      : "No events are open for registration right now. Check back when the department publishes one."
                     : "Your pass is made for this event. You can change it later."
             }
             onChange={(e) => {
@@ -358,6 +362,15 @@ export function StudentRegisterModal({ isOpen, onClose, onSuccess, goToPass = tr
                 {ev.title} · {formatDay(ev.start_time)}
               </option>
             ))}
+            {comingSoon.length > 0 && !!eventOptions?.length && (
+              <optgroup label="Registration opens soon">
+                {comingSoon.map((ev) => (
+                  <option key={ev.id} value={ev.id} disabled>
+                    {ev.title} · opens {formatDateTime(ev.registration_opens_at!)}
+                  </option>
+                ))}
+              </optgroup>
+            )}
           </SelectField>
           {eventsError && (
             <div className="mt-1.5 flex flex-wrap items-center gap-2 text-sm text-rose" role="alert">

@@ -7,7 +7,7 @@ import { Field, SelectField, TextAreaField } from "@/components/ui/Field";
 import { btn } from "@/components/ui/styles";
 import { api, ApiError } from "@/lib/client/api";
 import { NAME_PATTERN, SECTIONS, STUDENT_ID_PATTERN, deriveMajorFromSection, isKnownSection } from "@/lib/validation";
-import type { TokenPurpose } from "@/types/qr";
+import type { ScanAction } from "@/types/attendance";
 
 interface ManualEntryModalProps {
   isOpen: boolean;
@@ -15,7 +15,7 @@ interface ManualEntryModalProps {
   eventId: string;
   sessionId: string;
   sessionLabel: string;
-  purpose: TokenPurpose;
+  purpose: ScanAction;
   onSuccess?: (message: string) => void;
 }
 

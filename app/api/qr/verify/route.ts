@@ -13,11 +13,8 @@ const schema = z.object({
   token: z.string().min(1).max(4000),
   eventId: z.string().min(1),
   sessionId: z.string().min(1),
-  /**
-   * Set when staff switch the scanner to Time-in or Time-out. Left out in Auto,
-   * where a one-pass pass times in first and times out on a later scan.
-   */
-  expectedPurpose: purposeSchema.optional(),
+  /** What the scanner is set to record. Staff choose Time-in or Time-out; the pass doesn't decide. */
+  expectedPurpose: purposeSchema,
 });
 
 const REJECTIONS = {
@@ -85,7 +82,7 @@ export async function POST(request: NextRequest) {
         found,
         // One pass serves time-in and time-out, so it is not single-use; the
         // store's unique constraint stops a second time-in or time-out.
-        purpose: expectedPurpose ?? p.p,
+        purpose: expectedPurpose,
         officer: admin.name,
         method: "qr",
       });

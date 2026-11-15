@@ -19,7 +19,7 @@ export interface SessionMatch {
 }
 
 /** Fields an edit can change; sessions are written as a whole when given. */
-export type EventChanges = Partial<Pick<BAEvent, "title" | "description" | "venue" | "start_time" | "end_time" | "status">> & {
+export type EventChanges = Partial<Pick<BAEvent, "title" | "description" | "venue" | "start_time" | "end_time" | "registration_opens_at" | "status">> & {
   sessions?: EventSession[];
 };
 
@@ -162,6 +162,7 @@ interface EventRow {
   venue: string;
   start_time: string;
   end_time: string;
+  registration_opens_at: string | null;
   organizer_id: string | null;
   organizer_name: string | null;
   organizer_email: string | null;
@@ -184,6 +185,7 @@ function fromRow(row: EventRow): BAEvent {
     venue: row.venue,
     start_time: row.start_time,
     end_time: row.end_time,
+    ...(row.registration_opens_at ? { registration_opens_at: row.registration_opens_at } : {}),
     organizer_id: row.organizer_email ?? row.organizer_id ?? "",
     organizer_name: row.organizer_name ?? undefined,
     status: row.status,
@@ -230,7 +232,7 @@ function dbError(action: string, error: { code?: string; message: string }): Eve
   // PGRST204: a column the app writes doesn't exist. 23502: a NOT NULL column the app leaves empty.
   if (error.code === "PGRST204" || error.code === "23502") {
     return new EventStoreError(
-      "The database needs the events update. Run supabase/migrations/20261029_000002_app_managed_events.sql in the Supabase SQL editor, then try again."
+      "The database needs the events update. Run the newest files in supabase/migrations (20261029_000002_app_managed_events.sql and 20261116_000006_registration_opens.sql) in the Supabase SQL editor, then try again."
     );
   }
   return new EventStoreError(`Couldn't ${action}. Try again in a moment.`);
@@ -296,6 +298,7 @@ export async function addEvent(event: BAEvent): Promise<BAEvent> {
     venue: event.venue,
     start_time: event.start_time,
     end_time: event.end_time,
+    registration_opens_at: event.registration_opens_at ?? null,
     organizer_id: null,
     organizer_name: event.organizer_name ?? null,
     organizer_email: event.organizer_id || null,

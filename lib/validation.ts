@@ -142,6 +142,8 @@ const textSchema = (min: number, max: number, tooShort: string, tooLong: string)
     );
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+/** How far ahead of the event registration may open; catches a mistyped year or month. */
+export const MAX_REGISTRATION_LEAD_DAYS = 90;
 /** Shortest event: time-in and time-out each need a window of their own. */
 export const MIN_EVENT_MINS = 15;
 export const ENDED_MESSAGE = "This time has already passed. Choose a later end.";
@@ -157,11 +159,13 @@ const eventFields = {
     .int("Enter whole minutes.")
     .min(0, "Use 0 to 120 minutes.")
     .max(120, "Use 0 to 120 minutes."),
+  /** When students may start registering; null or absent opens it as soon as the event is published. */
+  registrationOpens: z.iso.datetime({ offset: true, message: "Choose when registration opens." }).nullable().optional(),
 };
 
 /** Schedule rules shared by create and edit. `requireFuture`: the end can't already have passed. */
 function checkSchedule(
-  v: { start: string; end: string; gracePeriodMins: number },
+  v: { start: string; end: string; gracePeriodMins: number; registrationOpens?: string | null },
   ctx: z.RefinementCtx,
   requireFuture: boolean
 ) {
@@ -175,6 +179,19 @@ function checkSchedule(
   else if (requireFuture && end <= Date.now()) ctx.addIssue({ code: "custom", path: ["end"], message: ENDED_MESSAGE });
   else if (v.gracePeriodMins * 60000 >= end - start)
     ctx.addIssue({ code: "custom", path: ["gracePeriodMins"], message: "The grace period must be shorter than the event." });
+
+  if (v.registrationOpens) {
+    const opens = new Date(v.registrationOpens).getTime();
+    if (Number.isNaN(opens)) return;
+    if (opens >= start)
+      ctx.addIssue({ code: "custom", path: ["registrationOpens"], message: "Registration must open before the event starts." });
+    else if (start - opens > MAX_REGISTRATION_LEAD_DAYS * DAY_MS)
+      ctx.addIssue({
+        code: "custom",
+        path: ["registrationOpens"],
+        message: `Registration can open up to ${MAX_REGISTRATION_LEAD_DAYS} days before the event.`,
+      });
+  }
 }
 
 /** A new event, checked by the "New event" form and again by POST /api/events. */

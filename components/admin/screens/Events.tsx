@@ -5,12 +5,12 @@ import { AlertTriangle, CalendarPlus, CheckCircle2, Info, Loader2, MapPin, Penci
 import { useAdminData } from "@/components/admin/AdminData";
 import { PageHeader } from "@/components/admin/PageHeader";
 import { Modal } from "@/components/ui/Modal";
-import { Field, TextAreaField } from "@/components/ui/Field";
+import { Field, SelectField, TextAreaField } from "@/components/ui/Field";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { btn, card } from "@/components/ui/styles";
 import { api, ApiError } from "@/lib/client/api";
-import { sessionState } from "@/lib/attendance/schedule";
-import { formatDay, formatTime, plural } from "@/lib/format";
+import { OPENS_EARLY_MINS, sessionState } from "@/lib/attendance/schedule";
+import { formatDateTime, formatDay, formatTime, plural } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { ENDED_MESSAGE, eventInputSchema, eventUpdateSchema, fieldErrors } from "@/lib/validation";
 import type { BAEvent } from "@/types/events";
@@ -55,7 +55,7 @@ export function EventsScreen() {
       putEvent(res.event);
       setNotice(
         status === "published"
-          ? `Published “${event.title}”. Students can get passes for it now.`
+          ? `Published “${event.title}”. ${registrationNote(res.event)}`
           : status === "draft"
             ? `Unpublished “${event.title}”. It's in Drafts and hidden from students.`
             : `Cancelled “${event.title}”. It's in Drafts; publish it again to restore it.`
@@ -178,6 +178,11 @@ export function EventsScreen() {
                       {formatTime(e.start_time)}–{formatTime(e.end_time)}
                     </span>
                     {session && <span>Late after {session.grace_period_mins} min grace</span>}
+                    {e.registration_opens_at && (
+                      <span>
+                        Registration {new Date(e.registration_opens_at).getTime() > now ? "opens" : "opened"} {formatDateTime(e.registration_opens_at)}
+                      </span>
+                    )}
                     <span>{plural(e.sessions?.length ?? 0, "session")}</span>
                     <span className="font-medium text-ink-soft">{plural(counts.get(e.id) ?? 0, "time-in")}</span>
                   </p>
@@ -261,6 +266,7 @@ export function EventsScreen() {
         open={creating || !!editing}
         event={editing}
         timeIns={editing ? counts.get(editing.id) ?? 0 : 0}
+        now={now}
         onClose={() => {
           setCreating(false);
           setEditing(null);
@@ -272,7 +278,7 @@ export function EventsScreen() {
           setFilter(tabFor(event));
           setNotice(
             mode === "created"
-              ? `Created “${event.title}”${event.status === "published" ? " and published it" : " as a draft"}.`
+              ? `Created “${event.title}”${event.status === "published" ? ` and published it. ${registrationNote(event)}` : " as a draft."}`
               : changed.length
                 ? `Saved changes to “${event.title}” (${changed.join(", ")}).`
                 : `No changes to “${event.title}”.`
@@ -381,19 +387,68 @@ function withOffset(local: string) {
   return `${local}:00${off >= 0 ? "+" : "-"}${String(Math.floor(abs / 60)).padStart(2, "0")}:${String(abs % 60).padStart(2, "0")}`;
 }
 
-type FormValues = { title: string; description: string; venue: string; start: string; end: string; gracePeriodMins: string; publish: boolean };
-type FormErrors = Partial<Record<keyof FormValues | "form", string>>;
+const DAY_MS = 24 * 3600000;
+
+/** Quick choices for when registration opens, relative to the start. "published" means as soon as the event is published. */
+const REGISTRATION_PRESETS = { "1d": 1, "3d": 3, "7d": 7 } as const;
+type RegistrationPreset = "published" | keyof typeof REGISTRATION_PRESETS | "custom";
+
+type FormValues = {
+  title: string;
+  description: string;
+  venue: string;
+  start: string;
+  end: string;
+  gracePeriodMins: string;
+  publish: boolean;
+  regPreset: RegistrationPreset;
+  /** The date-time typed in when regPreset is "custom". */
+  regCustom: string;
+};
+type FormErrors = Partial<Record<keyof FormValues | "registrationOpens" | "form", string>>;
+
+/** The registration time the form currently describes, as a datetime-local value; "" when it opens on publish. */
+function registrationValue(f: Pick<FormValues, "start" | "regPreset" | "regCustom">): string {
+  if (f.regPreset === "published") return "";
+  if (f.regPreset === "custom") return f.regCustom;
+  const start = new Date(f.start).getTime();
+  return Number.isNaN(start) ? "" : localInput(new Date(start - REGISTRATION_PRESETS[f.regPreset] * DAY_MS));
+}
+
+/** One sentence on when students can register, for the notices after publishing or saving. */
+function registrationNote(event: BAEvent): string {
+  const opens = event.registration_opens_at ? new Date(event.registration_opens_at) : null;
+  return opens && opens.getTime() > Date.now()
+    ? `Students can register and get their pass from ${formatDateTime(opens.toISOString())}.`
+    : "Students can get passes for it now.";
+}
 
 function blankForm(): FormValues {
   const start = new Date();
   start.setMinutes(0, 0, 0);
   start.setHours(start.getHours() + 1);
   const end = new Date(start.getTime() + 3 * 3600000);
-  return { title: "", description: "", venue: "", start: localInput(start), end: localInput(end), gracePeriodMins: "15", publish: true };
+  return {
+    title: "",
+    description: "",
+    venue: "",
+    start: localInput(start),
+    end: localInput(end),
+    gracePeriodMins: "15",
+    publish: true,
+    regPreset: "published",
+    regCustom: "",
+  };
 }
 
 function formFor(event: BAEvent): FormValues {
+  // An opening time exactly 1, 3 or 7 days before the start shows as that quick choice; anything else as a custom time.
+  const opens = event.registration_opens_at ? new Date(event.registration_opens_at) : null;
+  const lead = opens ? (new Date(event.start_time).getTime() - opens.getTime()) / DAY_MS : 0;
+  const preset = (Object.entries(REGISTRATION_PRESETS).find(([, days]) => days === lead)?.[0] as RegistrationPreset | undefined) ?? "custom";
   return {
+    regPreset: opens ? preset : "published",
+    regCustom: opens ? localInput(opens) : "",
     title: event.title,
     description: event.description,
     venue: event.venue,
@@ -406,6 +461,24 @@ function formFor(event: BAEvent): FormValues {
 
 const DESCRIPTION_MAX = 500;
 
+/** Spells out what students will experience, so the admin can check the setting at a glance. */
+function RegistrationPreview({ opens, start, now }: { opens: string; start: string; now: number }) {
+  const startMs = new Date(start).getTime();
+  const attendanceOpens = Number.isNaN(startMs) ? null : formatDateTime(new Date(startMs - OPENS_EARLY_MINS * 60000).toISOString());
+  if (!opens) {
+    return <>Students can register and get their pass as soon as you publish this event.{attendanceOpens && ` Attendance opens ${attendanceOpens}.`}</>;
+  }
+  const opensMs = new Date(opens).getTime();
+  if (Number.isNaN(opensMs) || Number.isNaN(startMs) || opensMs >= startMs) return <>Choose a time before the event starts.</>;
+  return (
+    <>
+      Students can register and download their pass from <strong className="font-semibold text-ink">{formatDateTime(new Date(opensMs).toISOString())}</strong>.
+      {attendanceOpens && ` Attendance opens ${attendanceOpens}.`}
+      {opensMs <= now && " That time has already passed, so registration opens as soon as the event is published."}
+    </>
+  );
+}
+
 /**
  * Creates an event, or edits one (`event` set), published or not. Validates
  * with the same schemas as the API, so the form and the server never disagree.
@@ -414,6 +487,7 @@ function EventFormModal({
   open,
   event,
   timeIns,
+  now,
   onClose,
   onSaved,
 }: {
@@ -421,6 +495,8 @@ function EventFormModal({
   /** The event being edited; absent when creating. */
   event?: BAEvent | null;
   timeIns: number;
+  /** The current time in ms, from the screen's last refresh. */
+  now: number;
   onClose: () => void;
   onSaved: (event: BAEvent, mode: "created" | "updated", changed: string[]) => void;
 }) {
@@ -450,7 +526,8 @@ function EventFormModal({
 
   const set = <K extends keyof FormValues>(k: K, v: FormValues[K]) => {
     setF((p) => ({ ...p, [k]: v }));
-    setErrors((e) => (e[k] || e.form ? { ...e, [k]: undefined, form: undefined } : e));
+    const regKey = k === "regPreset" || k === "regCustom";
+    setErrors((e) => (e[k] || e.form || (regKey && e.registrationOpens) ? { ...e, [k]: undefined, form: undefined, ...(regKey ? { registrationOpens: undefined } : {}) } : e));
   };
 
   /** Moving the start keeps the event's length, so the end never lands before it. */
@@ -462,7 +539,7 @@ function EventFormModal({
       const keepLength = !!next && !Number.isNaN(prevStart) && !Number.isNaN(prevEnd) && !Number.isNaN(nextStart) && prevEnd > prevStart;
       return { ...p, start: next, end: keepLength ? localInput(new Date(nextStart + (prevEnd - prevStart))) : p.end };
     });
-    setErrors((e) => ({ ...e, start: undefined, end: undefined, form: undefined }));
+    setErrors((e) => ({ ...e, start: undefined, end: undefined, registrationOpens: undefined, form: undefined }));
   };
 
   const close = () => {
@@ -470,6 +547,8 @@ function EventFormModal({
     if (dirty && !window.confirm(editing ? "Discard your changes to this event?" : "Discard this new event?")) return;
     onClose();
   };
+
+  const registrationOpens = registrationValue(f);
 
   const validate = (): { data: Record<string, unknown> } | { errors: FormErrors } => {
     const base = {
@@ -479,6 +558,7 @@ function EventFormModal({
       start: f.start ? withOffset(f.start) : "",
       end: f.end ? withOffset(f.end) : "",
       gracePeriodMins: f.gracePeriodMins.trim() === "" ? Number.NaN : Number(f.gracePeriodMins),
+      registrationOpens: registrationOpens ? withOffset(registrationOpens) : null,
     };
     if (!event) {
       const r = eventInputSchema.safeParse({ ...base, publish: f.publish });
@@ -608,6 +688,38 @@ function EventFormModal({
             {plural(timeIns, "student")} already timed in. The new schedule applies to new scans; recorded scans keep their status.
           </p>
         )}
+
+        <div className="space-y-3 rounded-lg border border-line p-4">
+          <SelectField
+            label="Registration opens"
+            value={f.regPreset}
+            disabled={saving}
+            error={f.regPreset === "custom" ? undefined : errors.registrationOpens}
+            hint="From this time students can register and keep their QR pass ready, then just show it when attendance opens."
+            onChange={(e) => set("regPreset", e.target.value as RegistrationPreset)}
+          >
+            <option value="published">As soon as the event is published</option>
+            <option value="1d">1 day before it starts</option>
+            <option value="3d">3 days before it starts</option>
+            <option value="7d">1 week before it starts</option>
+            <option value="custom">A specific date and time…</option>
+          </SelectField>
+          {f.regPreset === "custom" && (
+            <Field
+              label="Registration opens at"
+              required
+              type="datetime-local"
+              max={f.start || undefined}
+              disabled={saving}
+              value={f.regCustom}
+              error={errors.registrationOpens}
+              onChange={(e) => set("regCustom", e.target.value)}
+            />
+          )}
+          <p className="text-sm text-ink-soft" aria-live="polite">
+            <RegistrationPreview opens={registrationOpens} start={f.start} now={now} />
+          </p>
+        </div>
 
         {!editing && (
           <label className="flex items-start gap-3 text-sm">
