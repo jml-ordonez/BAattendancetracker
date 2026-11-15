@@ -146,8 +146,8 @@ function dbError(error: { code?: string; message: string }): StudentStoreError {
       eventId: "This event is no longer open for attendance. Choose another.",
     });
   }
-  // 42P01 / PGRST205: the students table hasn't been created yet. 42703: the edit key column hasn't.
-  if (error.code === "42P01" || error.code === "PGRST205" || error.code === "42703") {
+  // 42P01 / PGRST205: the students table hasn't been created yet. 42703 / PGRST204: a column hasn't (the edit key).
+  if (error.code === "42P01" || error.code === "PGRST205" || error.code === "42703" || error.code === "PGRST204") {
     return new StudentStoreError(
       "The database needs the students update. Run the students migrations in supabase/migrations in the Supabase SQL editor, then try again."
     );
