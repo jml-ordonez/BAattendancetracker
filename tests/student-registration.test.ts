@@ -117,6 +117,17 @@ describe("POST /api/students/register", () => {
     }
   });
 
+  it("fails instead of faking success in production when Supabase isn't configured", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    try {
+      const res = await register(valid);
+      expect(res.status).toBe(503);
+      expect((await res.json()).error).toMatch(/database isn't connected/i);
+    } finally {
+      vi.stubEnv("NODE_ENV", "test");
+    }
+  });
+
   it("rejects a body that isn't JSON", async () => {
     const res = await POST(
       new NextRequest("http://localhost/api/students/register", {

@@ -101,6 +101,14 @@ function dbError(error: { code?: string; message: string }): StudentStoreError {
 /** Creates the student, or updates their details when the ID number is already registered. */
 export async function saveStudent(input: StudentInput): Promise<StudentRecord> {
   if (!supabaseConfigured()) {
+    // Memory is for tests and offline demos only. In production it would report success
+    // for a registration that disappears on the next restart, so fail instead.
+    if (process.env.NODE_ENV === "production") {
+      console.error(
+        "[students] Supabase isn't configured: set NEXT_PUBLIC_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in the deployment's environment variables."
+      );
+      throw new StudentStoreError("Registration is unavailable right now because the database isn't connected. Tell the department.", 503);
+    }
     const map = memory();
     const now = new Date().toISOString();
     const existing = map.get(input.studentIdNumber);
