@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useDeferredValue, useMemo, useState } from "react";
-import { Download, Loader2, Search, ShieldCheck, Trash2 } from "lucide-react";
+import { AlertCircle, CheckCircle2, Download, Loader2, Search, ShieldCheck, Trash2 } from "lucide-react";
 import { useAdminData } from "@/components/admin/AdminData";
 import { PageHeader } from "@/components/admin/PageHeader";
 import { DecryptCSVModal } from "@/components/admin/DecryptCSVModal";
@@ -24,6 +24,8 @@ export function RecordsScreen() {
   const [shown, setShown] = useState(PAGE);
   const [confirmClear, setConfirmClear] = useState(false);
   const [clearing, setClearing] = useState(false);
+  const [clearError, setClearError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [decryptOpen, setDecryptOpen] = useState(false);
   const query = useDeferredValue(q.trim().toLowerCase());
 
@@ -69,12 +71,24 @@ export function RecordsScreen() {
   });
   const exportEncryptedHref = `/api/reports/export?${exportParams.toString()}`;
 
+  const openClear = () => {
+    setClearError(null);
+    setConfirmClear(true);
+  };
+
   const clearAll = async () => {
     setClearing(true);
+    setClearError(null);
     try {
-      await api("/api/attendance/records", { method: "DELETE" });
+      const { cleared } = await api<{ cleared: number }>("/api/attendance/records", { method: "DELETE" });
+      // Also drops any poll that was already in flight, so cleared records can't reappear.
       await refreshScans();
       setConfirmClear(false);
+      setShown(PAGE);
+      setNotice(cleared > 0 ? `Cleared ${plural(cleared, "scan")}. Export a CSV next time if you need a copy.` : "There was nothing to clear.");
+      window.setTimeout(() => setNotice(null), 6000);
+    } catch (e) {
+      setClearError(e instanceof Error ? e.message : "Couldn't reach the server.");
     } finally {
       setClearing(false);
     }
@@ -92,7 +106,7 @@ export function RecordsScreen() {
         actions={
           <div className="flex flex-wrap items-center gap-2">
             {scans.length > 0 && (
-              <button type="button" onClick={() => setConfirmClear(true)} className={btn.danger}>
+              <button type="button" onClick={openClear} className={btn.danger}>
                 <Trash2 className="h-4 w-4" aria-hidden="true" />
                 Clear all
               </button>
@@ -120,6 +134,13 @@ export function RecordsScreen() {
           </div>
         }
       />
+
+      {notice && (
+        <p className="animate-pop mb-4 flex items-center gap-2 rounded-lg bg-pine-soft px-4 py-3 text-sm font-medium text-pine" role="status">
+          <CheckCircle2 className="h-4 w-4 shrink-0" aria-hidden="true" />
+          {notice}
+        </p>
+      )}
 
       <section className={cn(card, "animate-rise")} style={{ "--i": 1 } as React.CSSProperties} aria-label="Attendance records">
         <div className="grid gap-3 border-b border-line p-5 sm:grid-cols-2 sm:p-6 lg:grid-cols-[minmax(0,1.6fr)_repeat(3,minmax(0,1fr))] lg:items-end">
@@ -253,18 +274,26 @@ export function RecordsScreen() {
 
       <Modal
         open={confirmClear}
-        onClose={() => setConfirmClear(false)}
+        onClose={() => {
+          if (!clearing) setConfirmClear(false);
+        }}
         size="sm"
         title="Clear all attendance records?"
-        description={`This permanently deletes ${plural(scans.length, "scan")} for every event. Export a CSV first if you need a copy. The action is recorded in the audit log.`}
+        description={`This permanently deletes ${plural(scans.length, "scan")} for every event. It can't be undone. Export a CSV first if you need a copy. The action is recorded in the audit log.`}
       >
+        {clearError && (
+          <p role="alert" className="mb-4 flex items-start gap-2 rounded-lg bg-rose-soft px-3 py-2.5 text-sm font-medium text-rose">
+            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+            <span>Nothing was deleted. {clearError}</span>
+          </p>
+        )}
         <div className="flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
-          <button type="button" onClick={() => setConfirmClear(false)} className={btn.secondary}>
+          <button type="button" onClick={() => setConfirmClear(false)} disabled={clearing} className={btn.secondary}>
             Keep records
           </button>
           <button type="button" onClick={clearAll} disabled={clearing} className={btn.dangerSolid}>
             {clearing && <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />}
-            Delete {plural(scans.length, "scan")}
+            {clearing ? "Deleting…" : clearError ? "Try again" : `Delete ${plural(scans.length, "scan")}`}
           </button>
         </div>
       </Modal>

@@ -1,10 +1,10 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { listScans } from "@/lib/attendance/store";
+import { listScans, ScanStoreError } from "@/lib/attendance/store";
 import { buildRoll } from "@/lib/attendance/roll";
 import { generateAttendanceCSV, type CSVAttendanceRow } from "@/lib/export/csv-generator";
 import { encryptCSV } from "@/lib/export/csv-crypto";
 import { logAudit } from "@/lib/audit/store";
-import { clientIp, requireAdmin } from "@/lib/http";
+import { clientIp, jsonError, requireAdmin } from "@/lib/http";
 import { MAJORS } from "@/lib/validation";
 
 const TIME_ZONE = process.env.APP_TIMEZONE || "Asia/Manila";
@@ -26,7 +26,15 @@ export async function GET(request: NextRequest) {
   const encrypted = sp.get("encrypted") !== "false" && sp.get("format") !== "plain" && sp.get("plain") !== "true";
   const passphrase = sp.get("passphrase")?.trim();
 
-  const roll = buildRoll(listScans()).filter(
+  let scans;
+  try {
+    scans = await listScans();
+  } catch (error) {
+    if (error instanceof ScanStoreError) return jsonError(error.message, error.status);
+    throw error;
+  }
+
+  const roll = buildRoll(scans).filter(
     (r) =>
       (!eventId || r.eventId === eventId) &&
       (!status || r.finalStatus === status) &&

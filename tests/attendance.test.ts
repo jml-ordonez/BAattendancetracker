@@ -39,86 +39,86 @@ const scan = (purpose: "time_in" | "time_out" | "attendance", time: string, extr
 describe("Attendance pipeline", () => {
   beforeEach(() => clearScans());
 
-  it("checks in on time within the grace period", () => {
-    const r = scan("time_in", "08:10");
+  it("checks in on time within the grace period", async () => {
+    const r = await scan("time_in", "08:10");
     expect(r.success).toBe(true);
     expect(r.status).toBe("SUCCESS_ON_TIME");
-    expect(listScans()[0].majorCode).toBe("BSBA-FM");
+    expect((await listScans())[0].majorCode).toBe("BSBA-FM");
   });
 
-  it("marks a check-in after the grace period as late", () => {
-    expect(scan("time_in", "08:20").status).toBe("SUCCESS_LATE");
+  it("marks a check-in after the grace period as late", async () => {
+    expect((await scan("time_in", "08:20")).status).toBe("SUCCESS_LATE");
   });
 
-  it("refuses check-in before the window opens and after the session ends", () => {
-    expect(scan("time_in", "06:30").status).toBe("WINDOW_CLOSED");
-    expect(scan("time_in", "13:30").status).toBe("WINDOW_CLOSED");
+  it("refuses check-in before the window opens and after the session ends", async () => {
+    expect((await scan("time_in", "06:30")).status).toBe("WINDOW_CLOSED");
+    expect((await scan("time_in", "13:30")).status).toBe("WINDOW_CLOSED");
   });
 
-  it("refuses a second check-in for the same session", () => {
-    scan("time_in", "08:05");
-    const r = scan("time_in", "08:07");
+  it("refuses a second check-in for the same session", async () => {
+    await scan("time_in", "08:05");
+    const r = await scan("time_in", "08:07");
     expect(r.success).toBe(false);
     expect(r.status).toBe("DUPLICATE_SCAN");
   });
 
-  it("refuses a check-out without a check-in", () => {
-    expect(scan("time_out", "12:10").status).toBe("STUDENT_INELIGIBLE");
+  it("refuses a check-out without a check-in", async () => {
+    expect((await scan("time_out", "12:10")).status).toBe("STUDENT_INELIGIBLE");
   });
 
-  it("records the stay and flags an early departure", () => {
-    scan("time_in", "08:00");
-    const r = scan("time_out", "11:00");
+  it("records the stay and flags an early departure", async () => {
+    await scan("time_in", "08:00");
+    const r = await scan("time_out", "11:00");
     expect(r.status).toBe("SUCCESS_CHECKOUT_EARLY");
     expect(r.details?.durationMinutes).toBe(180);
   });
 
-  it("accepts a QR token only once", () => {
+  it("accepts a QR token only once", async () => {
     const token = { id: "tok-1", expiresAt: Math.floor(Date.now() / 1000) + 60 };
-    expect(scan("time_in", "08:05", { token }).success).toBe(true);
-    expect(scan("time_out", "12:30", { token }).status).toBe("DUPLICATE_TOKEN_USE");
-    expect(scan("time_out", "12:31", { token: { ...token, id: "tok-2" } }).success).toBe(true);
+    expect((await scan("time_in", "08:05", { token })).success).toBe(true);
+    expect((await scan("time_out", "12:30", { token })).status).toBe("DUPLICATE_TOKEN_USE");
+    expect((await scan("time_out", "12:31", { token: { ...token, id: "tok-2" } })).success).toBe(true);
   });
 
-  it("uses one pass for check-in, then check-out, then refuses", () => {
-    const first = scan("attendance", "08:05");
+  it("uses one pass for check-in, then check-out, then refuses", async () => {
+    const first = await scan("attendance", "08:05");
     expect(first.status).toBe("SUCCESS_ON_TIME");
     expect(first.details?.action).toBe("time_in");
 
     // A double read at the door seconds later is not a check-out, and says how to time out.
-    const repeat = scan("attendance", "08:05:30");
+    const repeat = await scan("attendance", "08:05:30");
     expect(repeat.status).toBe("DUPLICATE_SCAN");
     expect(repeat.message).toMatch(/scan again in 30 seconds, or switch the scanner to Time-out/);
 
-    const second = scan("attendance", "12:30");
+    const second = await scan("attendance", "12:30");
     expect(second.status).toBe("SUCCESS_CHECKOUT");
     expect(second.details?.action).toBe("time_out");
 
-    const third = scan("attendance", "12:40");
+    const third = await scan("attendance", "12:40");
     expect(third.success).toBe(false);
     expect(third.message).toMatch(/already completed attendance/);
-    expect(listScans()).toHaveLength(2);
+    expect(await listScans()).toHaveLength(2);
   });
 
-  it("times out a short stay once the double-read window has passed", () => {
-    scan("attendance", "08:05");
-    const out = scan("attendance", "08:08");
+  it("times out a short stay once the double-read window has passed", async () => {
+    await scan("attendance", "08:05");
+    const out = await scan("attendance", "08:08");
     expect(out.success).toBe(true);
     expect(out.details?.action).toBe("time_out");
     expect(out.details?.isEarlyDeparture).toBe(true);
   });
 
-  it("times out at once when staff set the scanner to Time-out", () => {
-    scan("attendance", "08:05");
-    const out = scan("time_out", "08:05:20");
+  it("times out at once when staff set the scanner to Time-out", async () => {
+    await scan("attendance", "08:05");
+    const out = await scan("time_out", "08:05:20");
     expect(out.success).toBe(true);
     expect(out.details?.action).toBe("time_out");
   });
 
-  it("pairs check-in and check-out into one roll entry", () => {
-    scan("time_in", "08:20");
-    scan("time_out", "12:30");
-    const roll = buildRoll(listScans());
+  it("pairs check-in and check-out into one roll entry", async () => {
+    await scan("time_in", "08:20");
+    await scan("time_out", "12:30");
+    const roll = buildRoll(await listScans());
     expect(roll).toHaveLength(1);
     expect(roll[0].finalStatus).toBe("late");
     expect(roll[0].durationMinutes).toBe(250);
@@ -238,15 +238,15 @@ describe("Deleting an event", () => {
   beforeEach(() => clearScans());
 
   it("removes the event but keeps its attendance records", async () => {
-    scan("time_in", "08:05");
+    await scan("time_in", "08:05");
     const event = (await getEvent(EVENT))!;
     expect((await deleteEvent(EVENT))?.id).toBe(EVENT);
     expect(await getEvent(EVENT)).toBeUndefined();
     expect(await listEvents()).not.toContainEqual(expect.objectContaining({ id: EVENT }));
-    expect(listScans()).toHaveLength(1);
-    expect(listScans()[0].eventTitle).toBe(event.title);
+    expect(await listScans()).toHaveLength(1);
+    expect((await listScans())[0].eventTitle).toBe(event.title);
     // Scanning a pass for a deleted event is refused, not recorded.
-    expect(scan("time_out", "12:30", { found: await findSession(EVENT, SESSION) }).status).toBe("SESSION_NOT_FOUND");
+    expect((await scan("time_out", "12:30", { found: await findSession(EVENT, SESSION) })).status).toBe("SESSION_NOT_FOUND");
     expect(await deleteEvent(EVENT)).toBeNull();
     await addEvent(event); // restore the seed for later tests
   });

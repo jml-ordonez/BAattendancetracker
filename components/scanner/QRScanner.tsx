@@ -168,7 +168,9 @@ export function QRScanner({ eventId, sessionId, mode = "auto", disabled, onScann
       const data = await res.json().catch(() => null);
       if (res.ok && data) r = data;
       else if (res.status >= 500 || !data) {
-        r = { success: false, status: "SERVER_ERROR", message: `Server error (${res.status}). Nothing was recorded; scan the pass again.`, timestamp: now() };
+        // The server says why when it can (database not connected, table missing); otherwise a generic line.
+        const reason = typeof data?.error === "string" ? data.error : `Server error (${res.status}).`;
+        r = { success: false, status: "SERVER_ERROR", message: `${reason} Nothing was recorded; scan the pass again.`, timestamp: now() };
         recent.current.delete(token); // allow a retry
       } else r = { success: false, status: "TOKEN_INVALID", message: data.error ?? "Invalid QR. This code couldn’t be read as a pass.", timestamp: now() };
     } catch (err) {

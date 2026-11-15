@@ -154,7 +154,10 @@ export async function DELETE(request: NextRequest, { params }: Params) {
     const event = await deleteEvent(id);
     if (!event) return jsonError("This event was already deleted. Refresh the list.", 404);
 
-    const records = listScans().filter((s) => s.eventId === id).length;
+    // Only for the audit summary: a failed count must not undo a delete that already happened.
+    const records = await listScans()
+      .then((scans) => scans.filter((s) => s.eventId === id).length)
+      .catch(() => 0);
     logAudit({
       actor: admin.name,
       actorEmail: admin.email,

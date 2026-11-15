@@ -1,8 +1,8 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import { recordAttendance } from "@/lib/attendance/record";
-import { findScan } from "@/lib/attendance/store";
-import { findSession } from "@/lib/events/store";
+import { findStudentScans, ScanStoreError } from "@/lib/attendance/store";
+import { EventStoreError, findSession } from "@/lib/events/store";
 import { logAudit } from "@/lib/audit/store";
 import { clientIp, jsonError, parseBody, requireAdmin } from "@/lib/http";
 import {
@@ -51,23 +51,34 @@ export async function POST(request: NextRequest) {
   const v = parsed.data;
 
   let student;
-  if (v.purpose === "time_in") {
-    student = { name: v.studentName!, idNumber: v.studentIdNumber, majorCode: v.majorCode ?? deriveMajorFromSection(v.section!), section: v.section! };
-  } else {
-    const timeIn = findScan(v.studentIdNumber, v.sessionId, "time_in");
-    if (!timeIn) return jsonError(`No time-in on record for ${v.studentIdNumber} in this session.`, 404, { fieldErrors: { studentIdNumber: "No time-in on record for this ID in this session." } });
-    student = { name: timeIn.studentName, idNumber: v.studentIdNumber, majorCode: timeIn.majorCode, section: timeIn.section };
-  }
+  let result;
+  try {
+    if (v.purpose === "time_in") {
+      student = { name: v.studentName!, idNumber: v.studentIdNumber, majorCode: v.majorCode ?? deriveMajorFromSection(v.section!), section: v.section! };
+    } else {
+      const { timeIn } = await findStudentScans(v.studentIdNumber, v.sessionId);
+      if (!timeIn) {
+        const message = "No time-in on record for this ID in this session. Check the ID, or record a manual time-in first.";
+        return jsonError(message, 404, { fieldErrors: { studentIdNumber: message } });
+      }
+      student = { name: timeIn.studentName, idNumber: v.studentIdNumber, majorCode: timeIn.majorCode, section: timeIn.section };
+    }
 
-  const result = recordAttendance({
-    student,
-    eventId: v.eventId,
-    sessionId: v.sessionId,
-    found: await findSession(v.eventId, v.sessionId),
-    purpose: v.purpose,
-    officer: admin.name,
-    method: "manual",
-  });
+    result = await recordAttendance({
+      student,
+      eventId: v.eventId,
+      sessionId: v.sessionId,
+      found: await findSession(v.eventId, v.sessionId),
+      purpose: v.purpose,
+      officer: admin.name,
+      method: "manual",
+    });
+  } catch (error) {
+    if (error instanceof ScanStoreError || error instanceof EventStoreError) {
+      return jsonError(error.message, error instanceof ScanStoreError ? error.status : 503);
+    }
+    throw error;
+  }
 
   logAudit({
     actor: admin.name,

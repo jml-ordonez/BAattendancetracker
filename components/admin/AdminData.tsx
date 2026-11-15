@@ -36,14 +36,24 @@ export function AdminDataProvider({ admin, children }: { admin: AdminIdentity; c
   const [updatedAt, setUpdatedAt] = useState<Date | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  /**
+   * Bumped by every scans request. A response from an older request is dropped:
+   * a poll that started before "Clear all" must not paint the cleared records
+   * back onto the screen when it finally answers.
+   */
+  const scansVersion = useRef(0);
+
   const refreshScans = useCallback(async () => {
+    const version = ++scansVersion.current;
     try {
       const data = await api<{ records: AttendanceScan[] }>("/api/attendance/records");
+      if (version !== scansVersion.current) return;
       setScans(data.records);
       setUpdatedAt(new Date());
       setError(null);
       setLoaded((l) => (l.scans ? l : { ...l, scans: true }));
     } catch (e) {
+      if (version !== scansVersion.current) return;
       setError(e instanceof Error ? e.message : "Couldn't reach the server.");
     }
   }, []);

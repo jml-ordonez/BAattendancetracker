@@ -2,7 +2,7 @@ import type { ScanVerificationResult, TokenPurpose } from "@/types/qr";
 import type { AttendanceScan } from "@/types/attendance";
 import { evaluateAttendance } from "@/lib/rules/attendance-rules";
 import type { SessionMatch } from "@/lib/events/store";
-import { addScan, consumeToken, findScan } from "@/lib/attendance/store";
+import { addScan, consumeToken, findStudentScans, ScanConflictError } from "@/lib/attendance/store";
 
 /** How early before the time-in window a student may time in. */
 export const CHECK_IN_OPENS_EARLY_MINS = 60;
@@ -74,19 +74,19 @@ function fail(status: ScanVerificationResult["status"], message: string, student
  * scan (on time / late, timed out / left early) from the session's schedule
  * and grace period, and records it.
  *
- * Synchronous on purpose: with no awaits between the duplicate check and the
- * insert, two scans of the same pass cannot both get through. That is why the
- * caller looks the session up (async) and passes it in.
+ * The checks below read the student's existing scans first so the message can
+ * say what happened. They are not what keeps duplicates out: two scans of the
+ * same pass can pass the checks together, so the store's unique constraint
+ * decides, and the loser is answered as a duplicate (see `save`).
  */
-export function recordAttendance(input: RecordAttendanceInput): RecordAttendanceResult {
+export async function recordAttendance(input: RecordAttendanceInput): Promise<RecordAttendanceResult> {
   const { student, officer, method } = input;
   const now = input.now ?? new Date();
+  const { timeIn, timeOut } = await findStudentScans(student.idNumber, input.sessionId);
 
   // One pass for both: time in if there is no time-in yet, otherwise time out.
   let purpose = input.purpose;
   if (purpose === "attendance") {
-    const timeIn = findScan(student.idNumber, input.sessionId, "time_in");
-    const timeOut = findScan(student.idNumber, input.sessionId, "time_out");
     if (timeIn && timeOut) {
       return fail(
         "DUPLICATE_SCAN",
@@ -131,9 +131,6 @@ export function recordAttendance(input: RecordAttendanceInput): RecordAttendance
     }
   }
 
-  const timeIn = findScan(student.idNumber, session.id, "time_in");
-  const timeOut = findScan(student.idNumber, session.id, "time_out");
-
   if (purpose === "time_in" && timeIn) {
     return fail("DUPLICATE_SCAN", `${student.name} already timed in at ${clockTime(timeIn.timestamp)}.`, student);
   }
@@ -170,9 +167,21 @@ export function recordAttendance(input: RecordAttendanceInput): RecordAttendance
     timestamp: now.toISOString(),
   };
 
+  /** Saves the scan; a student who already has it (a simultaneous scan got in first) gets the duplicate answer. */
+  const save = async (scan: Omit<AttendanceScan, "id">, action: string): Promise<AttendanceScan | RecordAttendanceResult> => {
+    try {
+      return await addScan(scan);
+    } catch (error) {
+      if (!(error instanceof ScanConflictError)) throw error;
+      return fail("DUPLICATE_SCAN", `${student.name} was just ${action} by another scan. Refresh the records to see it.`, student);
+    }
+  };
+
   if (purpose === "time_in") {
     const result = evaluateAttendance(now, null, schedule);
-    const scan = addScan({ ...common, action: "time_in", status: result.isLate ? "late" : "on_time" });
+    const saved = await save({ ...common, action: "time_in", status: result.isLate ? "late" : "on_time" }, "timed in");
+    if (!("id" in saved)) return saved;
+    const scan = saved;
     return {
       success: true,
       status: result.isLate ? "SUCCESS_LATE" : "SUCCESS_ON_TIME",
@@ -194,16 +203,21 @@ export function recordAttendance(input: RecordAttendanceInput): RecordAttendance
   }
 
   const result = evaluateAttendance(new Date(timeIn!.timestamp), now, schedule);
-  const scan = addScan({
-    ...common,
-    // Keep the identity from the time-in scan so a manual time-out can't rename the student.
-    studentName: timeIn!.studentName,
-    majorCode: timeIn!.majorCode,
-    section: timeIn!.section,
-    action: "time_out",
-    status: result.isEarlyDeparture ? "left_early" : "checked_out",
-    durationMinutes: result.durationMinutes,
-  });
+  const saved = await save(
+    {
+      ...common,
+      // Keep the identity from the time-in scan so a manual time-out can't rename the student.
+      studentName: timeIn!.studentName,
+      majorCode: timeIn!.majorCode,
+      section: timeIn!.section,
+      action: "time_out",
+      status: result.isEarlyDeparture ? "left_early" : "checked_out",
+      durationMinutes: result.durationMinutes,
+    },
+    "timed out"
+  );
+  if (!("id" in saved)) return saved;
+  const scan = saved;
   return {
     success: true,
     status: result.isEarlyDeparture ? "SUCCESS_CHECKOUT_EARLY" : "SUCCESS_CHECKOUT",
