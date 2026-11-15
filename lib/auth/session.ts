@@ -23,6 +23,8 @@ export interface RegisteredStudentSession {
   section: string;
   /** The event the student registered for; missing on registrations made before events were chosen. */
   eventId?: string;
+  /** Private key the server gave this device at registration; proves it may edit this student ID later. */
+  editToken?: string;
   registeredAt: string;
 }
 
@@ -42,7 +44,8 @@ function isStudentRecord(value: unknown): value is RegisteredStudentSession {
     typeof v.email === "string" &&
     typeof v.majorCode === "string" &&
     typeof v.section === "string" &&
-    (v.eventId === undefined || typeof v.eventId === "string")
+    (v.eventId === undefined || typeof v.eventId === "string") &&
+    (v.editToken === undefined || typeof v.editToken === "string")
   );
 }
 
@@ -106,6 +109,8 @@ export function registerStudent(
   const existing = getRegisteredStudent();
   const student: RegisteredStudentSession = {
     ...profile,
+    // Kept across edits unless the server issued a new one.
+    editToken: profile.editToken ?? existing?.editToken,
     // randomUUID only exists in secure contexts; phones on a LAN address over http are not one.
     id: existing?.id ?? (typeof crypto.randomUUID === "function" ? crypto.randomUUID() : `student-${Date.now()}`),
     fullName: `${profile.firstName} ${profile.lastName}`,

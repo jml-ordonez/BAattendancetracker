@@ -1,7 +1,6 @@
 export interface CSVAttendanceRow {
   studentIdNumber: string;
   studentName: string;
-  major: string;
   yearLevel: string;
   section: string;
   eventTitle: string;
@@ -18,7 +17,6 @@ export function generateAttendanceCSV(rows: CSVAttendanceRow[]): string {
   const headers = [
     "Student ID Number",
     "Student Full Name",
-    "Major Program",
     "Year Level",
     "Section",
     "Event Title",
@@ -48,7 +46,6 @@ export function generateAttendanceCSV(rows: CSVAttendanceRow[]): string {
       [
         escapeCSV(row.studentIdNumber),
         escapeCSV(row.studentName),
-        escapeCSV(row.major),
         escapeCSV(row.yearLevel),
         escapeCSV(row.section),
         escapeCSV(row.eventTitle),

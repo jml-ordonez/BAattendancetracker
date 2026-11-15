@@ -1,9 +1,13 @@
 import { NextResponse, type NextRequest } from "next/server";
+import { z } from "zod";
 import { registrableEvents } from "@/lib/attendance/schedule";
 import { EventStoreError, getEvent } from "@/lib/events/store";
 import { clientIp, jsonError, parseBody } from "@/lib/http";
 import { saveStudent, StudentStoreError } from "@/lib/students/store";
 import { deriveMajorFromSection, studentRegistrationSchema, yearLevelForSection } from "@/lib/validation";
+
+/** The registration form, plus the edit key this device was given when it registered. */
+const bodySchema = studentRegistrationSchema.extend({ editToken: z.string().trim().max(100).optional() });
 
 /**
  * Generous on purpose: a whole class registers from one campus Wi-Fi address.
@@ -36,9 +40,9 @@ export async function POST(request: NextRequest) {
     return jsonError("Too many registrations from this connection. Wait a minute and try again.", 429);
   }
 
-  const parsed = await parseBody(request, studentRegistrationSchema);
+  const parsed = await parseBody(request, bodySchema);
   if ("response" in parsed) return parsed.response;
-  const { firstName, lastName, studentIdNumber, email, section, eventId } = parsed.data;
+  const { firstName, lastName, studentIdNumber, email, section, eventId, editToken } = parsed.data;
 
   try {
     const event = await getEvent(eventId);
@@ -48,22 +52,24 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    const student = await saveStudent({
-      studentIdNumber,
-      firstName: firstName.replace(/\s+/g, " "),
-      lastName: lastName.replace(/\s+/g, " "),
-      email,
-      majorCode: deriveMajorFromSection(section),
-      yearLevel: yearLevelForSection(section)!,
-      section,
-      eventId,
-    });
-    return NextResponse.json({ id: student.id }, { headers: { "Cache-Control": "no-store" } });
+    const { student, editToken: issued } = await saveStudent(
+      {
+        studentIdNumber,
+        firstName: firstName.replace(/\s+/g, " "),
+        lastName: lastName.replace(/\s+/g, " "),
+        email,
+        majorCode: deriveMajorFromSection(section),
+        yearLevel: yearLevelForSection(section)!,
+        section,
+        eventId,
+      },
+      editToken
+    );
+    // The edit key is only returned when it is new; the device keeps the one it has otherwise.
+    return NextResponse.json({ id: student.id, ...(issued ? { editToken: issued } : {}) }, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
-    if (error instanceof StudentStoreError || error instanceof EventStoreError) {
-      const status = error instanceof StudentStoreError ? error.status : 500;
-      return jsonError(error.message, status, status === 409 ? { fieldErrors: { email: error.message } } : undefined);
-    }
+    if (error instanceof StudentStoreError) return jsonError(error.message, error.status, error.fieldErrors ? { fieldErrors: error.fieldErrors } : undefined);
+    if (error instanceof EventStoreError) return jsonError(error.message, 500);
     throw error;
   }
 }

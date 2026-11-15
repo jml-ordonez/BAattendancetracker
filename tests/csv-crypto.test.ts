@@ -7,7 +7,6 @@ describe("CSV Encryption & Decryption Engine", () => {
     {
       studentIdNumber: "2024-01492-BA",
       studentName: "Maria Santos",
-      major: "BSBA in Financial Management",
       yearLevel: "2",
       section: "BA-FM 2-1",
       eventTitle: "Annual BA Leadership Summit 2026",
@@ -22,7 +21,6 @@ describe("CSV Encryption & Decryption Engine", () => {
     {
       studentIdNumber: "2021003213",
       studentName: "Juan Dela Cruz",
-      major: "BSBA in Marketing Management",
       yearLevel: "3",
       section: "MM-3B",
       eventTitle: "Annual BA Leadership Summit 2026",
@@ -77,6 +75,23 @@ describe("CSV Encryption & Decryption Engine", () => {
     const result = decryptCSV(tampered);
     expect(result.success).toBe(false);
     expect(result.error).toMatch(/integrity|authentication failed|tampered/i);
+  });
+
+  it("leaves the program column out of the export", () => {
+    const [header] = plainCSV.split("\r\n");
+    expect(header).not.toMatch(/major|program/i);
+    expect(plainCSV).not.toContain("BSBA");
+    expect(header.split(",")).toHaveLength(12);
+  });
+
+  it("still reads files exported before the program column was removed", () => {
+    const legacy = [
+      '"Student ID Number","Student Full Name","Major Program","Year Level","Section","Event Title","Session Title","Time In","Time Out","Duration (Mins)","Time In Classification","Time Out Classification","Final Attendance Status"',
+      '"2021003213","Juan Dela Cruz","BSBA in Marketing Management","3","MM-3B","Summit","Keynote","Oct 24, 8:25 AM","Oct 24, 12:18 PM",233,"late","normal","late"',
+    ].join("\r\n");
+    const [row] = parseDecryptedRows(legacy);
+    expect(row).toMatchObject({ studentName: "Juan Dela Cruz", section: "MM-3B", eventTitle: "Summit", durationMinutes: 233, finalStatus: "late" });
+    expect(row).not.toHaveProperty("major");
   });
 
   it("parses decrypted CSV rows correctly into typed attendance records", () => {

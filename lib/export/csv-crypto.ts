@@ -233,9 +233,10 @@ export function parseDecryptedRows(csvText: string): CSVAttendanceRow[] {
 
   for (let i = 1; i < lines.length; i++) {
     const vals = parseLine(lines[i]);
-    if (vals.length < 6) continue;
+    if (vals.length < 5) continue;
 
-    // Map by header index if standard headers exist, else map by order
+    // Map by header name, so files exported before the program column was removed still read correctly.
+    // The positions below are only a fallback for a file with no recognisable header row.
     const getVal = (name: string, fallbackIdx: number): string => {
       const idx = headers.findIndex((h) => h.toLowerCase() === name.toLowerCase());
       return idx >= 0 ? vals[idx] ?? "" : vals[fallbackIdx] ?? "";
@@ -244,17 +245,16 @@ export function parseDecryptedRows(csvText: string): CSVAttendanceRow[] {
     rows.push({
       studentIdNumber: getVal("Student ID Number", 0),
       studentName: getVal("Student Full Name", 1),
-      major: getVal("Major Program", 2),
-      yearLevel: getVal("Year Level", 3),
-      section: getVal("Section", 4),
-      eventTitle: getVal("Event Title", 5),
-      sessionTitle: getVal("Session Title", 6),
-      timeIn: getVal("Time In", 7),
-      timeOut: getVal("Time Out", 8),
-      durationMinutes: Number(getVal("Duration (Mins)", 9)) || 0,
-      timeInStatus: getVal("Time In Classification", 10),
-      timeOutStatus: getVal("Time Out Classification", 11),
-      finalStatus: getVal("Final Attendance Status", 12),
+      yearLevel: getVal("Year Level", 2),
+      section: getVal("Section", 3),
+      eventTitle: getVal("Event Title", 4),
+      sessionTitle: getVal("Session Title", 5),
+      timeIn: getVal("Time In", 6),
+      timeOut: getVal("Time Out", 7),
+      durationMinutes: Number(getVal("Duration (Mins)", 8)) || 0,
+      timeInStatus: getVal("Time In Classification", 9),
+      timeOutStatus: getVal("Time Out Classification", 10),
+      finalStatus: getVal("Final Attendance Status", 11),
     });
   }
 

@@ -128,6 +128,70 @@ describe("POST /api/students/register", () => {
     }
   });
 
+  describe("a student ID belongs to one student", () => {
+    const stored = (id = valid.studentIdNumber) =>
+      (globalThis as unknown as { __ba_students?: Map<string, { firstName: string; lastName: string }> }).__ba_students?.get(id);
+    const other = { ...valid, firstName: "Mario", lastName: "Reyes", email: "mario.reyes@ua.edu.ph" };
+
+    it("gives the registering device an edit key", async () => {
+      const body = await (await register(valid)).json();
+      expect(typeof body.editToken).toBe("string");
+      expect(body.editToken.length).toBeGreaterThan(30);
+    });
+
+    it("refuses a different name on a student ID that is taken, and leaves the first student alone", async () => {
+      await register(valid);
+      const res = await register(other);
+      expect(res.status).toBe(409);
+      const body = await res.json();
+      expect(body.fieldErrors.studentIdNumber).toMatch(/already registered to another student/i);
+      expect(stored()).toMatchObject({ firstName: "Juan", lastName: "Dela Cruz" });
+      // The message doesn't tell a stranger who owns the ID.
+      expect(JSON.stringify(body)).not.toMatch(/Juan|Dela Cruz/);
+    });
+
+    it("lets the same device correct its own details with the edit key", async () => {
+      const { editToken } = await (await register(valid)).json();
+      const res = await register({ ...valid, firstName: "Juanito", section: "MM-3A", editToken });
+      expect(res.status).toBe(200);
+      expect((await res.json()).editToken).toBeUndefined();
+      expect(stored()?.firstName).toBe("Juanito");
+    });
+
+    it("refuses a wrong edit key", async () => {
+      await register(valid);
+      const res = await register({ ...other, studentIdNumber: valid.studentIdNumber, editToken: "not-the-key" });
+      expect(res.status).toBe(409);
+      expect(stored()?.firstName).toBe("Juan");
+    });
+
+    it("recognises the same student on a new phone by name and email, ignoring case and spacing", async () => {
+      const first = await (await register(valid)).json();
+      const res = await register({ ...valid, firstName: "  JUAN ", lastName: "dela   cruz", email: "Juan.DelaCruz@ua.edu.ph", section: "MM-2B" });
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.id).toBe(first.id);
+      expect(body.editToken).toBeTruthy();
+      expect(body.editToken).not.toBe(first.editToken);
+      // The old phone's key was replaced, so it can no longer rename the student.
+      const stale = await register({ ...other, studentIdNumber: valid.studentIdNumber, editToken: first.editToken });
+      expect(stale.status).toBe(409);
+    });
+
+    it("doesn't let one student's edit key change another student ID", async () => {
+      const mine = await (await register(valid)).json();
+      await register({ ...other, studentIdNumber: "2022001235" });
+      const res = await register({ ...valid, studentIdNumber: "2022001235", firstName: "Hijack", editToken: mine.editToken });
+      expect(res.status).toBe(409);
+      expect(stored("2022001235")?.firstName).toBe("Mario");
+    });
+
+    it("lets only one of two simultaneous registrations take the ID", async () => {
+      const results = await Promise.all([register(valid), register({ ...other, studentIdNumber: valid.studentIdNumber })]);
+      expect(results.map((r) => r.status).sort()).toEqual([200, 409]);
+    });
+  });
+
   it("rejects a body that isn't JSON", async () => {
     const res = await POST(
       new NextRequest("http://localhost/api/students/register", {

@@ -166,11 +166,19 @@ export function StudentRegisterModal({ isOpen, onClose, onSuccess, goToPass = tr
     };
 
     // The database is the record of registration; the device only keeps a copy for the pass.
+    const previous = getRegisteredStudent();
+    let editToken: string | undefined;
     try {
-      await api("/api/students/register", { method: "POST", json: profile });
+      const saved = await api<{ id: string; editToken?: string }>("/api/students/register", {
+        method: "POST",
+        json: { ...profile, editToken: previous?.editToken },
+      });
+      editToken = saved.editToken;
     } catch (err) {
       if (err instanceof ApiError) {
+        // Field errors (such as a student ID that belongs to someone else) sit beside the field.
         setErrors(Object.keys(err.fieldErrors).length ? err.fieldErrors : { form: err.message });
+        requestAnimationFrame(() => document.querySelector<HTMLElement>('[role="dialog"] [aria-invalid="true"]')?.focus());
       } else {
         setErrors({ form: "We couldn't reach the server to save your registration. Check your connection, then try again." });
       }
@@ -179,7 +187,7 @@ export function StudentRegisterModal({ isOpen, onClose, onSuccess, goToPass = tr
     }
 
     try {
-      registerStudent(profile);
+      registerStudent({ ...profile, editToken });
       onSuccess?.();
       if (goToPass) {
         router.push("/student/qr");

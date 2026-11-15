@@ -7,7 +7,6 @@ describe("Export and Decrypt Route Endpoints Logic", () => {
     {
       studentIdNumber: "2024-01492-BA",
       studentName: "Maria Santos",
-      major: "BSBA in Financial Management",
       yearLevel: "2",
       section: "BA-FM 2-1",
       eventTitle: "Annual BA Leadership Summit 2026",

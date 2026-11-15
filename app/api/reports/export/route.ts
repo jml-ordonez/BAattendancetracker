@@ -5,7 +5,6 @@ import { generateAttendanceCSV, type CSVAttendanceRow } from "@/lib/export/csv-g
 import { encryptCSV } from "@/lib/export/csv-crypto";
 import { logAudit } from "@/lib/audit/store";
 import { clientIp, jsonError, requireAdmin } from "@/lib/http";
-import { MAJORS } from "@/lib/validation";
 
 const TIME_ZONE = process.env.APP_TIMEZONE || "Asia/Manila";
 const stamp = new Intl.DateTimeFormat("en-PH", { dateStyle: "medium", timeStyle: "short", timeZone: TIME_ZONE });
@@ -45,7 +44,6 @@ export async function GET(request: NextRequest) {
   const rows: CSVAttendanceRow[] = roll.map((r) => ({
     studentIdNumber: r.studentIdNumber,
     studentName: r.studentName,
-    major: MAJORS[r.majorCode] ?? r.majorCode,
     yearLevel: r.section.match(/^[A-Z]+-(\d)/i)?.[1] ?? r.section.match(/ (\d)-/)?.[1] ?? "",
     section: r.section,
     eventTitle: r.eventTitle,
