@@ -6,7 +6,7 @@ import { AlertCircle, ArrowRight, Loader2, RefreshCw } from "lucide-react";
 import { Modal } from "@/components/ui/Modal";
 import { Field, SelectField } from "@/components/ui/Field";
 import { btn } from "@/components/ui/styles";
-import { getRegisteredStudent, registerStudent } from "@/lib/auth/session";
+import { clearStudentRegistration, getRegisteredStudent, registerStudent } from "@/lib/auth/session";
 import { api, ApiError } from "@/lib/client/api";
 import { registrableEvents, upcomingRegistrations } from "@/lib/attendance/schedule";
 import { useEvents } from "@/lib/client/events";
@@ -78,6 +78,8 @@ export function StudentRegisterModal({ isOpen, onClose, onSuccess, goToPass = tr
   const [errors, setErrors] = useState<Errors>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isEdit, setIsEdit] = useState(false);
+  /** The student ID is already registered and the name and email match: offer to restore it on this device. */
+  const [restoreOffer, setRestoreOffer] = useState(false);
 
   const { events, error: eventsError, reload: reloadEvents } = useEvents(isOpen);
   const eventOptions = useMemo(() => (events ? registrableEvents(events) : null), [events]);
@@ -99,6 +101,7 @@ export function StudentRegisterModal({ isOpen, onClose, onSuccess, goToPass = tr
     if (isOpen) {
       setIsSubmitting(false);
       setErrors({});
+      setRestoreOffer(false);
       const existing = getRegisteredStudent();
       setIsEdit(!!existing);
       setEventId(existing?.eventId ?? "");
@@ -128,16 +131,42 @@ export function StudentRegisterModal({ isOpen, onClose, onSuccess, goToPass = tr
     []
   );
 
-  const clear = (key: keyof Errors) =>
+  const clear = (key: keyof Errors) => {
     setErrors((prev) => (prev[key] || prev.form ? { ...prev, [key]: undefined, form: undefined } : prev));
+    // The offer was made for the name, ID and email as they were; any change to them withdraws it.
+    if (key !== "section" && key !== "eventId") setRestoreOffer(false);
+  };
 
   const handleFieldBlur = (field: FieldKey, override?: Partial<Values>) => {
     const errs = validateValues({ firstName, lastName, studentIdNumber, email, section, eventId: chosenEvent, ...override }, openEventIds);
     setErrors((prev) => ({ ...prev, [field]: errs[field] }));
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  /** Starts a blank registration on a device that already holds someone's pass (a shared phone or computer). */
+  const registerSomeoneElse = () => {
+    clearStudentRegistration();
+    setIsEdit(false);
+    setRestoreOffer(false);
+    setErrors({});
+    setFirstName("");
+    setLastName("");
+    setStudentIdNumber("");
+    setEmail("");
+    setSection("");
+    setEventId("");
+  };
+
+  const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    void submit();
+  };
+
+  /**
+   * Saves the form. The server is told what this is: a new registration (refused when the
+   * student ID exists), an edit by the device that registered, or, only after the person
+   * confirms it is them, restoring their registration onto this device.
+   */
+  const submit = async (confirmedRestore = false) => {
     if (isSubmitting) return;
 
     const sid = normalizeStudentId(studentIdNumber);
@@ -169,17 +198,23 @@ export function StudentRegisterModal({ isOpen, onClose, onSuccess, goToPass = tr
 
     // The database is the record of registration; the device only keeps a copy for the pass.
     const previous = getRegisteredStudent();
+    // Editing means this device's own registration, same student ID. Anything else is a new registration.
+    const editingOwn = isEdit && previous?.studentIdNumber === sid;
+    const mode = confirmedRestore ? "restore" : editingOwn && previous?.editToken ? "update" : "register";
     let editToken: string | undefined;
+    setRestoreOffer(false);
     try {
       const saved = await api<{ id: string; editToken?: string }>("/api/students/register", {
         method: "POST",
-        json: { ...profile, editToken: previous?.editToken },
+        json: { ...profile, mode, ...(mode === "update" ? { editToken: previous?.editToken } : {}) },
       });
       editToken = saved.editToken;
     } catch (err) {
       if (err instanceof ApiError) {
-        // Field errors (such as a student ID that belongs to someone else) sit beside the field.
+        // Field errors (such as a student ID that is already registered) sit beside the field.
         setErrors(Object.keys(err.fieldErrors).length ? err.fieldErrors : { form: err.message });
+        // The ID is registered and the name and email match: the person may confirm it is them.
+        setRestoreOffer(err.data.canRestore === true);
         requestAnimationFrame(() => document.querySelector<HTMLElement>('[role="dialog"] [aria-invalid="true"]')?.focus());
       } else {
         setErrors({ form: "We couldn't reach the server to save your registration. Check your connection, then try again." });
@@ -216,7 +251,11 @@ export function StudentRegisterModal({ isOpen, onClose, onSuccess, goToPass = tr
       }}
       size="lg"
       title={isEdit ? "Update your details" : "Register for your attendance pass"}
-      description="Enter your details once as they appear on your university ID. Your registration is saved and your pass stays on this device."
+      description={
+        isEdit
+          ? "Correct your name, email, section or event. Your student ID stays the same."
+          : "Enter your details once as they appear on your university ID. Each student ID can be registered only once."
+      }
     >
       <form onSubmit={handleSubmit} noValidate className="space-y-5">
         {errors.form && (
@@ -272,9 +311,10 @@ export function StudentRegisterModal({ isOpen, onClose, onSuccess, goToPass = tr
             placeholder="e.g. 2022001234"
             maxLength={15}
             disabled={isSubmitting}
+            readOnly={isEdit}
             value={studentIdNumber}
             error={errors.studentIdNumber}
-            hint="10-digit ID printed on your university ID."
+            hint={isEdit ? "Your student ID can’t be changed after registering." : "10-digit ID printed on your university ID."}
             onBlur={() => {
               if (!studentIdNumber.trim()) return;
               const normalized = normalizeStudentId(studentIdNumber);
@@ -328,6 +368,34 @@ export function StudentRegisterModal({ isOpen, onClose, onSuccess, goToPass = tr
             )}
           </div>
         </div>
+
+        {restoreOffer && (
+          <div role="alert" className="rounded-lg border border-line-strong bg-brand-tint p-4 text-sm">
+            <p className="font-semibold text-ink">Is this you?</p>
+            <p className="mt-1 leading-relaxed text-ink-soft">
+              The name and email you entered match the registration for this student ID. If you changed phones or cleared your browser, you can put your
+              pass back on this device. The device you registered with will no longer be able to edit your details.
+            </p>
+            <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+              <button type="button" onClick={() => void submit(true)} disabled={isSubmitting} className={`${btn.primary} h-11`}>
+                {isSubmitting && <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />}
+                Yes, restore my pass here
+              </button>
+              <button type="button" onClick={() => setRestoreOffer(false)} disabled={isSubmitting} className={`${btn.secondary} h-11`}>
+                No, I’ll check my ID
+              </button>
+            </div>
+          </div>
+        )}
+
+        {isEdit && (
+          <p className="text-sm text-ink-soft">
+            Not {firstName.trim() || "you"}?{" "}
+            <button type="button" onClick={registerSomeoneElse} disabled={isSubmitting} className="press rounded font-semibold text-brand-ink underline-offset-2 hover:underline">
+              Register a different student
+            </button>
+          </p>
+        )}
 
         <div>
           <SelectField

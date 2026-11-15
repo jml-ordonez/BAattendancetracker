@@ -6,7 +6,9 @@ export class ApiError extends Error {
   constructor(
     message: string,
     public status: number,
-    public fieldErrors: Record<string, string> = {}
+    public fieldErrors: Record<string, string> = {},
+    /** The rest of the error response, for callers that offer a next step. */
+    public data: Record<string, unknown> = {}
   ) {
     super(message);
   }
@@ -25,7 +27,7 @@ export async function api<T>(url: string, init?: RequestInit & { json?: unknown 
   if (res.status === 401 && window.location.pathname.startsWith("/admin")) {
     window.location.assign(new URL(`/?auth=admin&next=${encodeURIComponent(window.location.pathname)}`, window.location.origin).href);
   }
-  if (!res.ok) throw new ApiError(data.error || "Something went wrong. Try again.", res.status, data.fieldErrors);
+  if (!res.ok) throw new ApiError(data.error || "Something went wrong. Try again.", res.status, data.fieldErrors, data);
   return data as T;
 }
 

@@ -10,16 +10,27 @@ import { createAdminClient } from "@/lib/supabase/admin";
  *
  * Students have no accounts, so a student ID is protected by an edit key instead:
  * the first registration hands the device a random key (only its SHA-256 hash is
- * stored), and only that key, or the same name and email, may change the row.
- * A different name on an ID that is already taken is refused, never overwritten.
+ * stored). Every save states what it is doing (see `SaveMode`), so a second
+ * registration of an ID is refused instead of quietly replacing or re-issuing it.
  */
+
+/**
+ * What the caller is doing.
+ * - "register": a new registration. Refused when the student ID already exists, whoever asks.
+ * - "update": the device that registered is editing its details; needs its edit key.
+ * - "restore": the same student on a new phone or after clearing the browser; needs the
+ *   name and email on file, and replaces the edit key. Offered only after "register" was refused.
+ */
+export type SaveMode = "register" | "update" | "restore";
 
 export class StudentStoreError extends Error {
   constructor(
     message: string,
     public status = 500,
     /** Messages to show beside the form fields that caused the error. */
-    public fieldErrors?: Record<string, string>
+    public fieldErrors?: Record<string, string>,
+    /** Set when the student ID is taken but the name and email match, so the person may restore their own registration. */
+    public canRestore = false
   ) {
     super(message);
   }
@@ -68,7 +79,12 @@ type StoredStudent = StudentRecord & { editTokenHash?: string | null };
 const ID_TAKEN = "This student ID is already registered to another student. Check the number on your university ID. If it is yours, ask the department to help.";
 const EMAIL_TAKEN = "That email is already registered under a different student ID. Use your own university email.";
 
-const idTakenError = () => new StudentStoreError(ID_TAKEN, 409, { studentIdNumber: ID_TAKEN });
+const ID_REGISTERED = "This student ID is already registered.";
+
+const idTakenError = (canRestore = false) =>
+  canRestore
+    ? new StudentStoreError(ID_REGISTERED, 409, { studentIdNumber: ID_REGISTERED }, true)
+    : new StudentStoreError(ID_TAKEN, 409, { studentIdNumber: ID_TAKEN });
 const emailTakenError = () => new StudentStoreError(EMAIL_TAKEN, 409, { email: EMAIL_TAKEN });
 
 const g = globalThis as unknown as { __ba_students?: Map<string, StoredStudent> };
@@ -115,23 +131,23 @@ function tokenMatches(presented: string | undefined, hash: string | null | undef
 /** Names and emails compared without regard to case or spacing: "  juan  DELA cruz " is "Juan Dela Cruz". */
 const same = (a: string, b: string) => a.trim().replace(/\s+/g, " ").toLowerCase() === b.trim().replace(/\s+/g, " ").toLowerCase();
 
-type Decision = { kind: "create" } | { kind: "update"; rotate: boolean } | { kind: "taken" };
+type Decision = { kind: "create" } | { kind: "update"; rotate: boolean } | { kind: "taken"; canRestore: boolean };
 
 /**
  * Who may write to this student ID.
  * - Nobody has it yet: create it.
- * - This device holds its edit key: update it (a typo fix, a new section or event).
- * - Same name and email as on file (a new phone, cleared browser data, or a row from before
- *   edit keys existed): update it and give this device a fresh key. Nothing about the person changes.
- * - Anyone else: refuse. The ID belongs to someone else.
+ * - "update" with this ID's edit key: update it (a typo fix, a new section or event).
+ * - "restore" with the same name and email as on file: update it and give this device a fresh
+ *   key. Nothing about the person changes, and the old phone's key stops working.
+ * - Everything else, including every "register": refuse. `canRestore` tells the form whether
+ *   to offer "restore" (only when the name and email already match).
  */
-function decide(existing: StoredStudent | null, input: StudentInput, presented: string | undefined): Decision {
+function decide(existing: StoredStudent | null, input: StudentInput, presented: string | undefined, mode: SaveMode): Decision {
   if (!existing) return { kind: "create" };
-  if (tokenMatches(presented, existing.editTokenHash)) return { kind: "update", rotate: false };
-  if (same(existing.firstName, input.firstName) && same(existing.lastName, input.lastName) && same(existing.email, input.email)) {
-    return { kind: "update", rotate: true };
-  }
-  return { kind: "taken" };
+  if (mode === "update" && tokenMatches(presented, existing.editTokenHash)) return { kind: "update", rotate: false };
+  const sameIdentity = same(existing.firstName, input.firstName) && same(existing.lastName, input.lastName) && same(existing.email, input.email);
+  if (mode === "restore" && sameIdentity) return { kind: "update", rotate: true };
+  return { kind: "taken", canRestore: sameIdentity };
 }
 
 /** Turns a Supabase error into one a person can act on; the details go to the server log. */
@@ -159,7 +175,7 @@ function dbError(error: { code?: string; message: string }): StudentStoreError {
  * Creates the student, or updates their details when the caller is allowed to
  * (see `decide`). `presentedToken` is the edit key this device was given earlier.
  */
-export async function saveStudent(input: StudentInput, presentedToken?: string): Promise<SaveStudentResult> {
+export async function saveStudent(input: StudentInput, presentedToken?: string, mode: SaveMode = "register"): Promise<SaveStudentResult> {
   if (!supabaseConfigured()) {
     // Memory is for tests and offline demos only. In production it would report success
     // for a registration that disappears on the next restart, so fail instead.
@@ -169,16 +185,16 @@ export async function saveStudent(input: StudentInput, presentedToken?: string):
       );
       throw new StudentStoreError("Registration is unavailable right now because the database isn't connected. Tell the department.", 503);
     }
-    return saveInMemory(input, presentedToken);
+    return saveInMemory(input, presentedToken, mode);
   }
-  return saveInSupabase(input, presentedToken, 0);
+  return saveInSupabase(input, presentedToken, mode, 0);
 }
 
-function saveInMemory(input: StudentInput, presentedToken: string | undefined): SaveStudentResult {
+function saveInMemory(input: StudentInput, presentedToken: string | undefined, mode: SaveMode): SaveStudentResult {
   const map = memory();
   const existing = map.get(input.studentIdNumber) ?? null;
-  const decision = decide(existing, input, presentedToken);
-  if (decision.kind === "taken") throw idTakenError();
+  const decision = decide(existing, input, presentedToken, mode);
+  if (decision.kind === "taken") throw idTakenError(decision.canRestore);
   if ([...map.values()].some((s) => s.email === input.email && s.studentIdNumber !== input.studentIdNumber)) throw emailTakenError();
 
   const now = new Date().toISOString();
@@ -193,7 +209,7 @@ function saveInMemory(input: StudentInput, presentedToken: string | undefined): 
   return { student, editToken: token };
 }
 
-async function saveInSupabase(input: StudentInput, presentedToken: string | undefined, attempt: number): Promise<SaveStudentResult> {
+async function saveInSupabase(input: StudentInput, presentedToken: string | undefined, mode: SaveMode, attempt: number): Promise<SaveStudentResult> {
   const sb = createAdminClient();
   const { data, error: readError } = await sb.from("students").select("*").eq("student_id_number", input.studentIdNumber).maybeSingle();
   if (readError) throw dbError(readError);
@@ -202,9 +218,10 @@ async function saveInSupabase(input: StudentInput, presentedToken: string | unde
   const decision = decide(
     row && { ...fromRow(row), editTokenHash: row.edit_token_hash },
     input,
-    presentedToken
+    presentedToken,
+    mode
   );
-  if (decision.kind === "taken") throw idTakenError();
+  if (decision.kind === "taken") throw idTakenError(decision.canRestore);
 
   const token = decision.kind === "create" || decision.rotate ? newToken() : undefined;
   const fields = {
@@ -223,7 +240,7 @@ async function saveInSupabase(input: StudentInput, presentedToken: string | unde
     // Two people registered this ID at the same moment and the other got in first:
     // judge this one against the winner instead of failing blindly.
     if (error?.code === "23505" && error.message.includes("student_id_number") && attempt === 0) {
-      return saveInSupabase(input, presentedToken, attempt + 1);
+      return saveInSupabase(input, presentedToken, mode, attempt + 1);
     }
     if (error) throw dbError(error);
     return { student: fromRow(created as StudentRow), editToken: token };

@@ -7,8 +7,14 @@ import { clientIp, jsonError, parseBody } from "@/lib/http";
 import { saveStudent, StudentStoreError } from "@/lib/students/store";
 import { deriveMajorFromSection, studentRegistrationSchema, yearLevelForSection } from "@/lib/validation";
 
-/** The registration form, plus the edit key this device was given when it registered. */
-const bodySchema = studentRegistrationSchema.extend({ editToken: z.string().trim().max(100).optional() });
+/**
+ * The registration form, plus what the device is doing (a new registration unless it says
+ * otherwise) and the edit key it was given when it registered.
+ */
+const bodySchema = studentRegistrationSchema.extend({
+  mode: z.enum(["register", "update", "restore"]).default("register"),
+  editToken: z.string().trim().max(100).optional(),
+});
 
 /**
  * Generous on purpose: a whole class registers from one campus Wi-Fi address.
@@ -43,7 +49,7 @@ export async function POST(request: NextRequest) {
 
   const parsed = await parseBody(request, bodySchema);
   if ("response" in parsed) return parsed.response;
-  const { firstName, lastName, studentIdNumber, email, section, eventId, editToken } = parsed.data;
+  const { firstName, lastName, studentIdNumber, email, section, eventId, editToken, mode } = parsed.data;
 
   try {
     const event = await getEvent(eventId);
@@ -68,12 +74,18 @@ export async function POST(request: NextRequest) {
         section,
         eventId,
       },
-      editToken
+      editToken,
+      mode
     );
     // The edit key is only returned when it is new; the device keeps the one it has otherwise.
     return NextResponse.json({ id: student.id, ...(issued ? { editToken: issued } : {}) }, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
-    if (error instanceof StudentStoreError) return jsonError(error.message, error.status, error.fieldErrors ? { fieldErrors: error.fieldErrors } : undefined);
+    if (error instanceof StudentStoreError) {
+      return jsonError(error.message, error.status, {
+        ...(error.fieldErrors ? { fieldErrors: error.fieldErrors } : {}),
+        ...(error.canRestore ? { canRestore: true } : {}),
+      });
+    }
     if (error instanceof EventStoreError) return jsonError(error.message, 500);
     throw error;
   }

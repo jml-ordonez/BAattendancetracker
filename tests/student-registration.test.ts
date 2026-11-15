@@ -68,6 +68,11 @@ function register(body: unknown) {
   );
 }
 
+/** What the (in-memory) store holds for a student ID. */
+function stored(id: string) {
+  return (globalThis as unknown as { __ba_students?: Map<string, { firstName: string; lastName: string; section: string }> }).__ba_students?.get(id);
+}
+
 describe("POST /api/students/register", () => {
   beforeAll(async () => {
     // No Supabase in tests: the stores fall back to memory.
@@ -91,11 +96,20 @@ describe("POST /api/students/register", () => {
     expect(typeof (await res.json()).id).toBe("string");
   });
 
-  it("registering the same student ID again updates the row instead of duplicating it", async () => {
+  it("refuses to register a student ID a second time, even with the same name and email", async () => {
     const first = await (await register(valid)).json();
-    const res = await register({ ...valid, section: "MM-3B" });
-    expect(res.status).toBe(200);
-    expect((await res.json()).id).toBe(first.id);
+    const again = await register(valid);
+    expect(again.status).toBe(409);
+    const body = await again.json();
+    expect(body.fieldErrors.studentIdNumber).toBe("This student ID is already registered.");
+    // No new pass key is handed out, and the first registration is untouched.
+    expect(body.editToken).toBeUndefined();
+    expect(body.id).toBeUndefined();
+    expect(first.id).toBeTruthy();
+
+    const changed = await register({ ...valid, section: "MM-3B" });
+    expect(changed.status).toBe(409);
+    expect(stored(valid.studentIdNumber)?.section).toBe("MM-2A");
   });
 
   it("rejects an email that belongs to a different student ID", async () => {
@@ -137,8 +151,6 @@ describe("POST /api/students/register", () => {
   });
 
   describe("a student ID belongs to one student", () => {
-    const stored = (id = valid.studentIdNumber) =>
-      (globalThis as unknown as { __ba_students?: Map<string, { firstName: string; lastName: string }> }).__ba_students?.get(id);
     const other = { ...valid, firstName: "Mario", lastName: "Reyes", email: "mario.reyes@ua.edu.ph" };
 
     it("gives the registering device an edit key", async () => {
@@ -149,47 +161,69 @@ describe("POST /api/students/register", () => {
 
     it("refuses a different name on a student ID that is taken, and leaves the first student alone", async () => {
       await register(valid);
-      const res = await register(other);
-      expect(res.status).toBe(409);
-      const body = await res.json();
-      expect(body.fieldErrors.studentIdNumber).toMatch(/already registered to another student/i);
-      expect(stored()).toMatchObject({ firstName: "Juan", lastName: "Dela Cruz" });
-      // The message doesn't tell a stranger who owns the ID.
-      expect(JSON.stringify(body)).not.toMatch(/Juan|Dela Cruz/);
+      for (const mode of ["register", "update", "restore"]) {
+        const res = await register({ ...other, mode });
+        expect(res.status).toBe(409);
+        const body = await res.json();
+        expect(body.fieldErrors.studentIdNumber).toMatch(/already registered to another student/i);
+        // No offer to restore, and nothing that tells a stranger who owns the ID.
+        expect(body.canRestore).toBeUndefined();
+        expect(JSON.stringify(body)).not.toMatch(/Juan|Dela Cruz/);
+      }
+      expect(stored(valid.studentIdNumber)).toMatchObject({ firstName: "Juan", lastName: "Dela Cruz" });
     });
 
-    it("lets the same device correct its own details with the edit key", async () => {
+    it("lets the device that registered edit its details, only as an explicit update with its key", async () => {
       const { editToken } = await (await register(valid)).json();
-      const res = await register({ ...valid, firstName: "Juanito", section: "MM-3A", editToken });
+
+      // The key alone isn't enough: a plain registration of the same ID is still refused.
+      const asNew = await register({ ...valid, firstName: "Juanito", editToken });
+      expect(asNew.status).toBe(409);
+      expect(stored(valid.studentIdNumber)?.firstName).toBe("Juan");
+
+      const res = await register({ ...valid, firstName: "Juanito", section: "MM-3A", mode: "update", editToken });
       expect(res.status).toBe(200);
       expect((await res.json()).editToken).toBeUndefined();
-      expect(stored()?.firstName).toBe("Juanito");
+      expect(stored(valid.studentIdNumber)).toMatchObject({ firstName: "Juanito", section: "MM-3A" });
     });
 
-    it("refuses a wrong edit key", async () => {
+    it("refuses an update with a wrong or missing edit key", async () => {
       await register(valid);
-      const res = await register({ ...other, studentIdNumber: valid.studentIdNumber, editToken: "not-the-key" });
-      expect(res.status).toBe(409);
-      expect(stored()?.firstName).toBe("Juan");
+      for (const editToken of ["not-the-key", undefined]) {
+        const res = await register({ ...valid, firstName: "Juanito", mode: "update", editToken });
+        expect(res.status).toBe(409);
+      }
+      expect(stored(valid.studentIdNumber)?.firstName).toBe("Juan");
     });
 
-    it("recognises the same student on a new phone by name and email, ignoring case and spacing", async () => {
+    it("offers to restore only when the name and email match, and restores only when asked", async () => {
       const first = await (await register(valid)).json();
-      const res = await register({ ...valid, firstName: "  JUAN ", lastName: "dela   cruz", email: "Juan.DelaCruz@ua.edu.ph", section: "MM-2B" });
+      const sameStudent = { ...valid, firstName: "  JUAN ", lastName: "dela   cruz", email: "Juan.DelaCruz@ua.edu.ph", section: "MM-2B" };
+
+      // A new phone registering again: refused, with the offer.
+      const refused = await register(sameStudent);
+      expect(refused.status).toBe(409);
+      expect((await refused.json()).canRestore).toBe(true);
+      expect(stored(valid.studentIdNumber)?.section).toBe("MM-2A");
+
+      // The person confirms it is them.
+      const res = await register({ ...sameStudent, mode: "restore" });
       expect(res.status).toBe(200);
       const body = await res.json();
       expect(body.id).toBe(first.id);
       expect(body.editToken).toBeTruthy();
       expect(body.editToken).not.toBe(first.editToken);
-      // The old phone's key was replaced, so it can no longer rename the student.
-      const stale = await register({ ...other, studentIdNumber: valid.studentIdNumber, editToken: first.editToken });
-      expect(stale.status).toBe(409);
+      expect(stored(valid.studentIdNumber)?.section).toBe("MM-2B");
+
+      // The old phone's key was replaced, so it can no longer edit; the new one can.
+      expect((await register({ ...valid, firstName: "Juanito", mode: "update", editToken: first.editToken })).status).toBe(409);
+      expect((await register({ ...valid, firstName: "Juanito", mode: "update", editToken: body.editToken })).status).toBe(200);
     });
 
     it("doesn't let one student's edit key change another student ID", async () => {
       const mine = await (await register(valid)).json();
       await register({ ...other, studentIdNumber: "2022001235" });
-      const res = await register({ ...valid, studentIdNumber: "2022001235", firstName: "Hijack", editToken: mine.editToken });
+      const res = await register({ ...valid, studentIdNumber: "2022001235", firstName: "Hijack", mode: "update", editToken: mine.editToken });
       expect(res.status).toBe(409);
       expect(stored("2022001235")?.firstName).toBe("Mario");
     });
@@ -197,6 +231,13 @@ describe("POST /api/students/register", () => {
     it("lets only one of two simultaneous registrations take the ID", async () => {
       const results = await Promise.all([register(valid), register({ ...other, studentIdNumber: valid.studentIdNumber })]);
       expect(results.map((r) => r.status).sort()).toEqual([200, 409]);
+      const twins = await Promise.all([register({ ...valid, studentIdNumber: "2022004444", email: "twin@ua.edu.ph" }), register({ ...valid, studentIdNumber: "2022004444", email: "twin@ua.edu.ph" })]);
+      expect(twins.map((r) => r.status).sort()).toEqual([200, 409]);
+    });
+
+    it("rejects an unknown mode", async () => {
+      const res = await register({ ...valid, mode: "overwrite" });
+      expect(res.status).toBe(400);
     });
   });
 
@@ -219,7 +260,7 @@ describe("POST /api/students/register", () => {
       expect(res.status).toBe(403);
       const body = await res.json();
       expect(body.fieldErrors.eventId).toMatch(/Registration for this event opens on .+\. Come back then/);
-      expect(stored()).toBeUndefined();
+      expect(stored(valid.studentIdNumber)).toBeUndefined();
     });
 
     it("lets students register ahead of the event once it has opened", async () => {
@@ -236,10 +277,6 @@ describe("POST /api/students/register", () => {
       expect(open.status).toBe(200);
       expect(typeof (await open.json()).token).toBe("string");
     });
-
-    function stored() {
-      return (globalThis as unknown as { __ba_students?: Map<string, unknown> }).__ba_students?.get(valid.studentIdNumber);
-    }
   });
 
   it("rejects a body that isn't JSON", async () => {

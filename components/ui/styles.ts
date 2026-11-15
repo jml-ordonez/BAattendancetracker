@@ -15,4 +15,4 @@ export const btn = {
 export const card = "rounded-xl border border-line bg-card shadow-[0_1px_2px_rgba(28,25,23,0.04),0_8px_24px_-16px_rgba(28,25,23,0.12)]";
 
 export const input =
-  "block h-11 w-full rounded-lg border border-line-strong bg-white px-3 text-base text-ink placeholder:text-muted/70 transition-colors sm:text-sm focus:border-brand-dark focus:outline-none focus:ring-3 focus:ring-brand/40";
+  "block h-11 w-full rounded-lg border border-line-strong bg-white px-3 text-base text-ink placeholder:text-muted/70 transition-colors sm:text-sm focus:border-brand-dark focus:outline-none focus:ring-3 focus:ring-brand/40 [&[readonly]]:bg-paper [&[readonly]]:text-ink-soft";
